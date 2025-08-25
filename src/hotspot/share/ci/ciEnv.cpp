@@ -984,6 +984,7 @@ void ciEnv::register_method(ciMethod* target,
                             bool has_wide_vectors,
                             bool has_monitors,
                             bool has_scoped_access,
+                            bool alloc_in_non_profiled_hot_code_heap,
                             int immediate_oops_patched) {
   VM_ENTRY_MARK;
   nmethod* nm = nullptr;
@@ -1067,7 +1068,8 @@ void ciEnv::register_method(ciMethod* target,
                                debug_info(), dependencies(), code_buffer,
                                frame_words, oop_map_set,
                                handler_table, inc_table,
-                               compiler, CompLevel(task()->comp_level()));
+                               compiler, CompLevel(task()->comp_level()),
+                               alloc_in_non_profiled_hot_code_heap);
 
     // Free codeBlobs
     code_buffer->free_blob();

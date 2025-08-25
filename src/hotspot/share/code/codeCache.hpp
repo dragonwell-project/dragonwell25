@@ -226,6 +226,7 @@ class CodeCache : AllStatic {
   static void verify();                          // verifies the code cache
   static void print_trace(const char* event, CodeBlob* cb, uint size = 0) PRODUCT_RETURN;
   static void print_summary(outputStream* st, bool detailed = true); // Prints a summary of the code cache usage
+  static void trace_non_profiled_hot_code_heap_activities(outputStream* st, const char* event, CodeBlob* cb, unsigned int size = 0, bool detailed = true);
   static void log_state(outputStream* st);
   LINUX_ONLY(static void write_perf_map(const char* filename, outputStream* st);) // Prints warnings and error messages to outputStream
   static const char* get_code_heap_name(CodeBlobType code_blob_type)  { return (heap_available(code_blob_type) ? get_code_heap(code_blob_type)->name() : "Unused"); }
@@ -264,10 +265,12 @@ class CodeCache : AllStatic {
   }
 
   static bool code_blob_type_accepts_nmethod(CodeBlobType type) {
+    // Accept nmethod: MethodHotNonProfiled should meet this requirement
     return type == CodeBlobType::All || type <= CodeBlobType::MethodProfiled;
   }
 
   static bool code_blob_type_accepts_allocable(CodeBlobType type) {
+    // Accept allocable: MethodHotNonProfiled should meet this requirement
     return type <= CodeBlobType::All;
   }
 
@@ -286,6 +289,18 @@ class CodeCache : AllStatic {
     }
     ShouldNotReachHere();
     return static_cast<CodeBlobType>(0);
+  }
+
+  // Returns the codeBlobType for the given method and compilation level
+  static CodeBlobType get_code_blob_type(const methodHandle& method, int comp_level, bool alloc_in_non_profiled_hot_code_heap) {
+    if (alloc_in_non_profiled_hot_code_heap && is_c2_compile(comp_level)) {
+      if (!method->is_native()) {
+        if (CodeCache::heap_available(CodeBlobType::MethodHotNonProfiled)) {
+          return CodeBlobType::MethodHotNonProfiled;
+        }
+      }
+    }
+    return get_code_blob_type(comp_level);
   }
 
   static void verify_clean_inline_caches();

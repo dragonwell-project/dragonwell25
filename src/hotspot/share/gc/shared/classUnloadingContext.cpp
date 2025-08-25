@@ -161,11 +161,15 @@ void ClassUnloadingContext::free_nmethods() {
     for (nmethod* nm : *nmethod_set) {
       MutexLocker ml(CodeCache_lock, Mutex::_no_safepoint_check_flag);
       CodeCache::free(nm);
+      // Logging NonProfiledHotCodeHeap activities
+      CodeCache::trace_non_profiled_hot_code_heap_activities(tty, "Free", nm);
     }
   } else {
     MutexLocker ml(CodeCache_lock, Mutex::_no_safepoint_check_flag);
     for (nmethod* nm : *nmethod_set) {
       CodeCache::free(nm);
+      // Logging NonProfiledHotCodeHeap activities
+      CodeCache::trace_non_profiled_hot_code_heap_activities(tty, "Free", nm);
     }
   }
 

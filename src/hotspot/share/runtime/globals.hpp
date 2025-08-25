@@ -2018,6 +2018,15 @@ const int ObjectAlignmentInBytes = 8;
           "Minimal number of elements in a sorted collection to prefer"     \
           "binary search over simple linear search." )                      \
                                                                             \
+  product(bool, TraceNonProfiledHotCodeHeapActivities, false, DIAGNOSTIC,   \
+          "Trace activities of NonProfiledHotCodeHeap")                     \
+                                                                            \
+  product(uintx, NonProfiledHotCodeHeapSize, 0,                             \
+          "Size of hot code heap with non-profiled methods (in bytes)")     \
+          range(0, max_uintx)                                               \
+                                                                            \
+  product(bool, AllocIVtableStubInNonProfiledHotCodeHeap, false,            \
+          "Allocate itable/vtable in NonProfiledHotCodeHeap")               \
 
 // end of RUNTIME_FLAGS
 
