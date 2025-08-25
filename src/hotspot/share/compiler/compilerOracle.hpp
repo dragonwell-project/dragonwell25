@@ -77,6 +77,7 @@ class methodHandle;
   option(CompileThresholdScaling, "CompileThresholdScaling", Double) \
   option(ControlIntrinsic,  "ControlIntrinsic",  Ccstrlist) \
   option(DisableIntrinsic,  "DisableIntrinsic",  Ccstrlist) \
+  option(AllocInNonProfiledHotCodeHeap, "AllocInNonProfiledHotCodeHeap", Bool) \
   option(BlockLayoutByFrequency, "BlockLayoutByFrequency", Bool) \
   option(TraceOptoPipelining, "TraceOptoPipelining", Bool) \
   option(TraceOptoOutput, "TraceOptoOutput", Bool) \

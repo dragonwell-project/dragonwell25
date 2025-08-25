@@ -378,6 +378,7 @@ public:
                        bool                      has_wide_vectors,
                        bool                      has_monitors,
                        bool                      has_scoped_access,
+                       bool                      alloc_in_non_profiled_hot_code_heap,
                        int                       immediate_oops_patched);
 
   // Access to certain well known ciObjects.

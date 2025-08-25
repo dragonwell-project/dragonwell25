@@ -336,8 +336,7 @@ class nmethod : public CodeBlob {
           );
 
   // helper methods
-  void* operator new(size_t size, int nmethod_size, int comp_level) throw();
-
+  void* operator new(size_t size, int nmethod_size, CodeBlobType code_blob_type) throw();
   // For method handle intrinsics: Try MethodNonProfiled, MethodProfiled and NonNMethod.
   // Attention: Only allow NonNMethod space for special nmethods which don't need to be
   // findable by nmethod iterators! In particular, they must not contain oops!
@@ -561,7 +560,8 @@ public:
                               ExceptionHandlerTable* handler_table,
                               ImplicitExceptionTable* nul_chk_table,
                               AbstractCompiler* compiler,
-                              CompLevel comp_level
+                              CompLevel comp_level,
+                              bool alloc_in_non_profiled_hot_code_heap
 #if INCLUDE_JVMCI
                               , char* speculations = nullptr,
                               int speculations_len = 0,
