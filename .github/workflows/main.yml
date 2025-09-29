@@ -26,9 +26,14 @@
 name: 'OpenJDK GHA Sanity Checks'
 
 on:
+  pull_request:
+    branches:
+      - master
   push:
     branches-ignore:
       - pr/*
+      - dragonwell_extended-*
+      - dragonwell_standard-*
   workflow_dispatch:
     inputs:
       platforms:
@@ -50,6 +55,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
+  check_commit:
+    name: 'Check Commit Message'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: dragonwell-releng/check_commit_action@master
+    if: github.event_name == 'pull_request'
 
   ###
   ### Determine platforms to include
