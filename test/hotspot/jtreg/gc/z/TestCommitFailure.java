@@ -24,6 +24,7 @@
 package gc.z;
 
 /*
+<<<<<<< HEAD
  * @test id=Normal
  * @requires vm.gc.Z & vm.debug
  * @summary Test ZGC graceful failure when a commit fails
@@ -32,6 +33,8 @@ package gc.z;
  */
 
 /*
+=======
+>>>>>>> jdk-25.0.1+8
  * @test id=ZFakeNUMA
  * @requires vm.gc.Z & vm.debug
  * @library / /test/lib
