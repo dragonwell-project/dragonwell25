@@ -1423,8 +1423,8 @@ address StubGenerator::generate_cipherBlockChaining_encryptAESCrypt() {
 address StubGenerator::generate_electronicCodeBook_AESCrypt_Parallel(bool is_encrypt) {
   assert(UseAES, "need AES instructions and misaligned SSE support");
   __ align(CodeEntryAlignment);
-  StubId stub_id = is_encrypt ? StubId::stubgen_electronicCodeBook_encryptAESCrypt_id
-                              : StubId::stubgen_electronicCodeBook_decryptAESCrypt_id;
+  StubGenStubId stub_id = is_encrypt ? StubGenStubId::electronicCodeBook_encryptAESCrypt_id
+                                     : StubGenStubId::electronicCodeBook_decryptAESCrypt_id;
   StubCodeMark mark(this, stub_id);
   address start = __ pc();
 
