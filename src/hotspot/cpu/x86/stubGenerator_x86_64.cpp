@@ -1612,20 +1612,20 @@ address StubGenerator::generate_sha256_implCompress(StubGenStubId stub_id) {
 
   const XMMRegister shuf_mask = xmm8;
 
-  __ enter();
-
-  __ subptr(rsp, 4 * wordSize);
-
   if (VM_Version::supports_sha()) {
+    __ subptr(rsp, 4 * wordSize);
     __ fast_sha256(msg, state0, state1, msgtmp0, msgtmp1, msgtmp2, msgtmp3, msgtmp4,
       buf, state, ofs, limit, rsp, multi_block, shuf_mask);
+    __ addptr(rsp, 4 * wordSize);
   } else if (VM_Version::supports_avx2()) {
+    __ enter();
+    __ subptr(rsp, 4 * wordSize);
     __ sha256_AVX2(msg, state0, state1, msgtmp0, msgtmp1, msgtmp2, msgtmp3, msgtmp4,
       buf, state, ofs, limit, rsp, multi_block, shuf_mask);
+    __ addptr(rsp, 4 * wordSize);
+    __ vzeroupper();
+    __ leave();
   }
-  __ addptr(rsp, 4 * wordSize);
-  __ vzeroupper();
-  __ leave();
   __ ret(0);
 
   return start;

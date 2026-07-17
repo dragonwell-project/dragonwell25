@@ -106,8 +106,12 @@ abstract class SHA2 extends DigestBase {
         long bitsProcessed = bytesProcessed << 3;
 
         int index = (int)bytesProcessed & 0x3f;
-        int padLen = (index < 56) ? (56 - index) : (120 - index);
-        engineUpdate(padding, 0, padLen);
+        if (index < 56) {
+            buffer[index] = (byte) 0x80;
+            Arrays.fill(buffer, index + 1, 56, (byte) 0);
+        } else {
+            engineUpdate(padding, 0, 120 - index);
+        }
 
         i2bBig4((int)(bitsProcessed >>> 32), buffer, 56);
         i2bBig4((int)bitsProcessed, buffer, 60);
