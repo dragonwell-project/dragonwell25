@@ -303,6 +303,8 @@
   void vfcvt_rtz_x_f_v_safe(VectorRegister dst, VectorRegister src);
 
   void extract_v(Register dst, VectorRegister src, BasicType bt, int idx, VectorRegister tmp);
+  void extract_v(Register dst, VectorRegister src,
+                 BasicType bt, Register idx, VectorRegister vtmp);
   void extract_fp_v(FloatRegister dst, VectorRegister src, BasicType bt, int idx, VectorRegister tmp);
 
 #endif // CPU_RISCV_C2_MACROASSEMBLER_RISCV_HPP
