@@ -362,6 +362,7 @@ void VM_Version::xuantie_features() {
   }
 
   ext_v.enable_feature();
+  ext_Zabha.enable_feature();
   ext_Zba.enable_feature();
   ext_Zbb.enable_feature();
   ext_Zbc.enable_feature();
