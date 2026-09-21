@@ -3994,7 +3994,7 @@ class StubGenerator: public StubCodeGenerator {
       subi(t0, tmp0, 1);
       sltu(t0, t0, tmp0); // Set carry iff tmp0 is nonzero
       cadc(tmp0, tmp1, Rhi_mn, t0);
-      adc(tmp1, tmp2, zr, t0);
+      add(tmp1, tmp2, t0);
       mv(tmp2, zr);
     }
 
@@ -4049,7 +4049,7 @@ class StubGenerator: public StubCodeGenerator {
 
       // tmp0 = tmp1; tmp1 = tmp2; tmp2 = 0;
       cadc(tmp0, tmp1, Rhi_mn, t0); // The pending m*n, high part
-      adc(tmp1, tmp2, zr, t0);
+      add(tmp1, tmp2, t0);
       mv(tmp2, zr);
     }
 
@@ -4187,7 +4187,7 @@ class StubGenerator: public StubCodeGenerator {
       subi(t0, tmp0, 1);
       sltu(t0, t0, tmp0); // Set carry iff tmp0 is nonzero
       cadc(tmp0, tmp1, Rhi_mn, t0);
-      adc(tmp1, tmp2, zr, t0);
+      add(tmp1, tmp2, t0);
       mv(tmp2, zr);
     }
 
@@ -4196,7 +4196,7 @@ class StubGenerator: public StubCodeGenerator {
              Register tmp0, Register tmp1, Register tmp2) {
       cad(tmp0, tmp0, Rlo, t0);
       cadc(tmp1, tmp1, Rhi, t0);
-      adc(tmp2, tmp2, zr, t0);
+      add(tmp2, tmp2, t0);
     }
 
   public:
