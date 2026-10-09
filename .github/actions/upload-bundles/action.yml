@@ -38,6 +38,10 @@ inputs:
   static-suffix:
     description: 'Static JDK bundle name suffix, possibly empty'
     required: false
+  compression-level:
+    description: 'Artifact compression level (0-9)'
+    required: false
+    default: '6'
 
 runs:
   using: composite
@@ -92,4 +96,5 @@ runs:
         name: bundles-${{ inputs.platform }}${{ inputs.debug-suffix }}${{ inputs.static-suffix }}${{ inputs.bundle-suffix }}
         path: bundles
         retention-days: 5
+        compression-level: ${{ inputs.compression-level }}
       if: steps.bundles.outputs.bundles-found == 'true'
