@@ -50,6 +50,14 @@ on:
       static-suffix:
         required: false
         type: string
+      generate-cds-archive:
+        required: false
+        type: boolean
+        default: false
+      timeout-factor:
+        required: false
+        type: string
+        default: '4'
 
 env:
   # These are needed to make the MSYS2 bash work properly
@@ -153,6 +161,15 @@ jobs:
           static-suffix: ${{ inputs.static-suffix }}
         if: ${{ inputs.dry-run == false }}
 
+      # Cross builds cannot execute the target JVM on the build host, so they
+      # cannot create the target-specific default CDS archive while building.
+      - name: 'Generate the default CDS archive'
+        run: |
+          "${{ steps.bundles.outputs.jdk-path }}/bin/java" -Xshare:dump
+          test -f "${{ steps.bundles.outputs.jdk-path }}/lib/server/classes.jsa"
+          "${{ steps.bundles.outputs.jdk-path }}/bin/java" -Xshare:on -version
+        if: ${{ inputs.dry-run == false && inputs.generate-cds-archive }}
+
       - name: 'Install dependencies'
         run: |
           # On macOS we need to install some dependencies for testing
@@ -200,7 +217,7 @@ jobs:
           TEST_IMAGE_DIR=${{ steps.bundles.outputs.tests-path }}
           ${{ steps.extra-options.outputs.test-jdk }}
           ${{ steps.extra-options.outputs.compile-jdk }}
-          JTREG='JAVA_OPTIONS=-XX:-CreateCoredumpOnCrash;VERBOSE=fail,error,time;KEYWORDS=!headful;${{ steps.extra-options.outputs.extra-problem-lists }}'
+          JTREG='TIMEOUT_FACTOR=${{ inputs.timeout-factor }};JAVA_OPTIONS=-XX:-CreateCoredumpOnCrash;VERBOSE=fail,error,time;KEYWORDS=!headful;${{ steps.extra-options.outputs.extra-problem-lists }}'
           && bash ./.github/scripts/gen-test-summary.sh "$GITHUB_STEP_SUMMARY" "$GITHUB_OUTPUT"
         env:
           PATH: ${{ steps.path.outputs.value }}

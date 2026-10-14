@@ -1,0 +1,130 @@
+#
+# Copyright (c) 2026, Alibaba Group Holding Limited. All Rights Reserved.
+# DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+
+name: 'Build and test (linux-riscv64)'
+
+on:
+  workflow_call:
+    inputs:
+      configure-arguments:
+        required: false
+        type: string
+      make-arguments:
+        required: false
+        type: string
+      dry-run:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: 'Cross-build linux-riscv64 bundles'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 'Checkout the JDK source'
+        uses: actions/checkout@v6
+
+      # The build machine is x86_64, so configure must run with an x86_64
+      # BootJDK even though the generated JDK targets RISC-V.
+      - name: 'Get the build-host BootJDK'
+        id: bootjdk
+        uses: ./.github/actions/get-bootjdk
+        with:
+          platform: linux-x64
+
+      - name: 'Get GTest'
+        id: gtest
+        uses: ./.github/actions/get-gtest
+
+      - name: 'Install cross toolchain and sysroot tools'
+        run: |
+          sudo apt-get update
+          sudo apt-get install \
+              autoconf make unzip zip \
+              gcc-14 g++-14 \
+              gcc-14-riscv64-linux-gnu g++-14-riscv64-linux-gnu \
+              debootstrap qemu-user-static \
+              libxrandr-dev libxtst-dev libcups2-dev libasound2-dev
+
+      - name: 'Check cache for the RISC-V sysroot'
+        id: sysroot-cache
+        uses: actions/cache@v5
+        with:
+          path: sysroot
+          key: sysroot-riscv64-trixie-${{ hashFiles('.github/workflows/build-riscv64.yml') }}
+
+      - name: 'Create the RISC-V sysroot'
+        if: steps.sysroot-cache.outputs.cache-hit != 'true'
+        run: >
+          sudo debootstrap
+          --no-merged-usr
+          --arch=riscv64
+          --verbose
+          --include=fakeroot,symlinks,build-essential,libx11-dev,libxext-dev,libxrender-dev,libxrandr-dev,libxtst-dev,libxt-dev,libcups2-dev,libfontconfig1-dev,libasound2-dev,libfreetype-dev,libpng-dev
+          --resolve-deps
+          --variant=minbase
+          trixie
+          sysroot
+          https://deb.debian.org/debian/
+
+      - name: 'Prepare the RISC-V sysroot'
+        if: steps.sysroot-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo chroot sysroot symlinks -cr .
+          sudo chown "${USER}" -R sysroot
+          rm -rf sysroot/{dev,proc,run,sys,var}
+          rm -rf sysroot/usr/{sbin,bin,share}
+          rm -rf sysroot/usr/lib/{apt,gcc,udev,systemd}
+          rm -rf sysroot/usr/libexec/gcc
+          rm -rf sysroot/{sbin,bin}
+          rm -rf sysroot/lib/{udev,systemd}
+
+      - name: 'Configure the cross build'
+        run: >
+          bash configure
+          --with-conf-name=linux-riscv64
+          --with-version-opt=${GITHUB_ACTOR}-${GITHUB_SHA}
+          --with-boot-jdk=${{ steps.bootjdk.outputs.path }}
+          --with-build-jdk=${{ steps.bootjdk.outputs.path }}
+          --with-gtest=${{ steps.gtest.outputs.path }}
+          --with-debug-level=release
+          --with-zlib=system
+          --disable-precompiled-headers
+          --openjdk-target=riscv64-linux-gnu
+          --with-sysroot=sysroot
+          --with-jmod-compress=zip-1
+          CC=riscv64-linux-gnu-gcc-14
+          CXX=riscv64-linux-gnu-g++-14
+          ${{ inputs.configure-arguments }}
+          || (cat config.log && exit 1)
+
+      - name: 'Build product and test bundles'
+        uses: ./.github/actions/do-build
+        with:
+          make-target: 'product-bundles test-bundles ${{ inputs.make-arguments }}'
+          platform: linux-riscv64
+        if: ${{ inputs.dry-run == false }}
+
+      # The bundles are already compressed tarballs. Disabling another compression
+      # pass makes this transfer faster and avoids stressing the artifact runtime.
+      - name: 'Upload RISC-V bundles'
+        uses: ./.github/actions/upload-bundles
+        with:
+          platform: linux-riscv64
+          compression-level: '0'
+        if: ${{ inputs.dry-run == false }}
+
+  test:
+    name: 'Tier 1 on native RISC-V'
+    needs: build
+    uses: ./.github/workflows/test.yml
+    with:
+      platform: linux-riscv64
+      bootjdk-platform: linux-riscv64
+      runs-on: ubuntu-24.04-riscv
+      dry-run: ${{ inputs.dry-run }}
+      generate-cds-archive: true
+      timeout-factor: '8'
