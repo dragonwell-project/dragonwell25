@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2006, 2026, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2021, Huawei Technologies Co., Ltd. All rights reserved.
  * Copyright (c) 2023, Rivos Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -26,10 +26,13 @@
 
 #include "asm/register.hpp"
 #include "logging/log.hpp"
+#include "os_linux.hpp"
 #include "riscv_hwprobe.hpp"
+#include "runtime/java.hpp"
 #include "runtime/os.hpp"
 #include "runtime/os.inline.hpp"
 #include "runtime/vm_version.hpp"
+#include "utilities/formatBuffer.hpp"
 
 #include <asm/hwcap.h>
 #include <ctype.h>
@@ -103,17 +106,29 @@ uint32_t VM_Version::cpu_vector_length() {
   return (uint32_t)read_csr(CSR_VLENB);
 }
 
+void VM_Version::RVExtFeatureValue::log_enabled() {
+  log_info(os, cpu)("Enabled RV64 feature \"%s\"", pretty());
+}
+
+void VM_Version::RVExtFeatureValue::log_disabled(const char* reason) {
+  log_info(os, cpu)("Disabled RV64 feature \"%s\" (%s)", pretty(), reason);
+}
+
+void VM_Version::RVNonExtFeatureValue::log_enabled() {
+  log_info(os, cpu)("Enabled RV64 feature \"%s\" (%ld)", pretty(), value());
+}
+
 void VM_Version::setup_cpu_available_features() {
 
-  assert(ext_I.feature_bit() == HWCAP_ISA_I, "Bit for I must follow Linux HWCAP");
-  assert(ext_M.feature_bit() == HWCAP_ISA_M, "Bit for M must follow Linux HWCAP");
-  assert(ext_A.feature_bit() == HWCAP_ISA_A, "Bit for A must follow Linux HWCAP");
-  assert(ext_F.feature_bit() == HWCAP_ISA_F, "Bit for F must follow Linux HWCAP");
-  assert(ext_D.feature_bit() == HWCAP_ISA_D, "Bit for D must follow Linux HWCAP");
-  assert(ext_C.feature_bit() == HWCAP_ISA_C, "Bit for C must follow Linux HWCAP");
-  assert(ext_Q.feature_bit() == HWCAP_ISA_Q, "Bit for Q must follow Linux HWCAP");
-  assert(ext_H.feature_bit() == HWCAP_ISA_H, "Bit for H must follow Linux HWCAP");
-  assert(ext_V.feature_bit() == HWCAP_ISA_V, "Bit for V must follow Linux HWCAP");
+  assert(ext_i.feature_bit() == HWCAP_ISA_I, "Bit for I must follow Linux HWCAP");
+  assert(ext_m.feature_bit() == HWCAP_ISA_M, "Bit for M must follow Linux HWCAP");
+  assert(ext_a.feature_bit() == HWCAP_ISA_A, "Bit for A must follow Linux HWCAP");
+  assert(ext_f.feature_bit() == HWCAP_ISA_F, "Bit for F must follow Linux HWCAP");
+  assert(ext_d.feature_bit() == HWCAP_ISA_D, "Bit for D must follow Linux HWCAP");
+  assert(ext_c.feature_bit() == HWCAP_ISA_C, "Bit for C must follow Linux HWCAP");
+  assert(ext_q.feature_bit() == HWCAP_ISA_Q, "Bit for Q must follow Linux HWCAP");
+  assert(ext_h.feature_bit() == HWCAP_ISA_H, "Bit for H must follow Linux HWCAP");
+  assert(ext_v.feature_bit() == HWCAP_ISA_V, "Bit for V must follow Linux HWCAP");
 
   if (!RiscvHwprobe::probe_features()) {
     os_aux_features();
@@ -144,9 +159,8 @@ void VM_Version::setup_cpu_available_features() {
         continue;
       }
 
-      log_debug(os, cpu)("Enabled RV64 feature \"%s\" (%ld)",
-             _feature_list[i]->pretty(),
-             _feature_list[i]->value());
+      _feature_list[i]->log_enabled();
+
       // The feature string
       if (_feature_list[i]->feature_string()) {
         const char* tmp = _feature_list[i]->pretty();
@@ -186,7 +200,7 @@ void VM_Version::setup_cpu_available_features() {
     // via PR_RISCV_SCOPE_PER_THREAD, i.e. on VM attach/deattach.
     int ret = prctl(PR_RISCV_SET_ICACHE_FLUSH_CTX, PR_RISCV_CTX_SW_FENCEI_ON, PR_RISCV_SCOPE_PER_PROCESS);
     if (ret == 0) {
-      log_debug(os, cpu)("UseCtxFencei (PR_RISCV_CTX_SW_FENCEI_ON) enabled.");
+      log_info(os, cpu)("UseCtxFencei (PR_RISCV_CTX_SW_FENCEI_ON) enabled.");
     } else {
       FLAG_SET_ERGO(UseCtxFencei, false);
       log_info(os, cpu)("UseCtxFencei (PR_RISCV_CTX_SW_FENCEI_ON) disabled, unsupported by kernel.");
@@ -262,6 +276,26 @@ char* VM_Version::os_uarch_additional_features() {
     mode = VM_MBARE;
   }
   fclose(f);
+
+  // The code generator assumes that every address it embeds in an instruction
+  // sequence fits in 48 bits, see movptr() and mov_metadata(). On SV57 hardware
+  // that only holds because the kernel clamps the window it allocates from by
+  // default to the SV48 range: MMAP_VA_BITS_64 is MIN(VA_BITS, VA_BITS_SV48),
+  // so DEFAULT_MAP_WINDOW and STACK_TOP stay at 2^47 on SV48 and SV57 alike.
+  // SV57 kernels before Linux v6.6 lack that clamp, allocate from the full SV57
+  // range and cannot be supported.
+  if (mode >= VM_SV57) {
+    long major, minor, patch;
+    os::Linux::kernel_version(&major, &minor, &patch);
+    if (os::Linux::kernel_version_compare(major, minor, patch, 6, 6, 0) == -1) {
+      vm_exit_during_initialization(
+        err_msg(
+           "Satp mode SV%d requires a Linux kernel of 6.6 or later, which restricts "
+           "the default address space to the sv48 range (current kernel is %ld.%ld.%ld).",
+           (int)mode, major, minor, patch));
+    }
+  }
+
   satp_mode.enable_feature(mode);
   return ret;
 }
@@ -272,10 +306,13 @@ void VM_Version::vendor_features() {
   }
   switch (mvendorid.value()) {
     case RIVOS:
-    rivos_features();
-    break;
+      rivos_features();
+      break;
+    case XUANTIE:
+      xuantie_features();
+      break;
     default:
-    break;
+      break;
   }
 }
 
@@ -294,7 +331,6 @@ void VM_Version::rivos_features() {
 
   ext_Zfh.enable_feature();
 
-  ext_Zicboz.enable_feature();
   ext_Zicsr.enable_feature();
   ext_Zifencei.enable_feature();
   ext_Zic64b.enable_feature();
@@ -310,5 +346,52 @@ void VM_Version::rivos_features() {
   if (mimpid.value() > 0x100) {
     ext_Zacas.enable_feature();
     ext_Zihintpause.enable_feature();
+  }
+}
+
+void VM_Version::xuantie_features() {
+  if (!marchid.enabled()) {
+    return;
+  }
+
+  const uint64_t architecture_id = static_cast<uint64_t>(marchid.value());
+  if (architecture_id != C925_MARCHID &&
+      architecture_id != C930_MARCHID &&
+      architecture_id != C950_MARCHID) {
+    return;
+  }
+
+  ext_v.enable_feature();
+  ext_Zacas.enable_feature();
+  ext_Zabha.enable_feature();
+  ext_Zba.enable_feature();
+  ext_Zbb.enable_feature();
+  ext_Zbc.enable_feature();
+  ext_Zbs.enable_feature();
+  ext_Zcb.enable_feature();
+  ext_Zfa.enable_feature();
+  ext_Zfh.enable_feature();
+  ext_Zfhmin.enable_feature();
+  ext_Zicbom.enable_feature();
+  ext_Zicbop.enable_feature();
+  ext_Zicboz.enable_feature();
+  ext_Ziccid.enable_feature();
+  ext_Zicond.enable_feature();
+  ext_Zicntr.enable_feature();
+  ext_Zicsr.enable_feature();
+  ext_Zic64b.enable_feature();
+  ext_Zifencei.enable_feature();
+  ext_Zihintpause.enable_feature();
+  ext_Zvbb.enable_feature();
+  ext_Zvbc.enable_feature();
+  ext_Zvfh.enable_feature();
+  ext_Zvkn.enable_feature();
+  ext_Zvkg.enable_feature();
+
+  unaligned_scalar.enable_feature(MISALIGNED_SCALAR_FAST);
+  unaligned_vector.enable_feature(MISALIGNED_VECTOR_FAST);
+
+  if (FLAG_IS_DEFAULT(CodeEntryAlignment)) {
+    FLAG_SET_DEFAULT(CodeEntryAlignment, 32);
   }
 }

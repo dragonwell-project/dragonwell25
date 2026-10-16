@@ -155,13 +155,10 @@ void TemplateTable::patch_bytecode(Bytecodes::Code bc, Register bc_reg,
       assert(byte_no == f1_byte || byte_no == f2_byte, "byte_no out of range");
       assert(load_bc_into_bc_reg, "we use bc_reg as temp");
       __ load_field_entry(temp_reg, bc_reg);
-      if (byte_no == f1_byte) {
-        __ la(temp_reg, Address(temp_reg, in_bytes(ResolvedFieldEntry::get_code_offset())));
-      } else {
-        __ la(temp_reg, Address(temp_reg, in_bytes(ResolvedFieldEntry::put_code_offset())));
-      }
+      int code_offset = (byte_no == f1_byte) ? in_bytes(ResolvedFieldEntry::get_code_offset())
+                                             : in_bytes(ResolvedFieldEntry::put_code_offset());
       // Load-acquire the bytecode to match store-release in ResolvedFieldEntry::fill_in()
-      __ lbu(temp_reg, Address(temp_reg, 0));
+      __ lbu(temp_reg, Address(temp_reg, code_offset));
       __ membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
       __ mv(bc_reg, bc);
       __ beqz(temp_reg, L_patch_done);
@@ -1612,7 +1609,7 @@ void TemplateTable::float_cmp(bool is_float, int unordered_result) {
 }
 
 void TemplateTable::branch(bool is_jsr, bool is_wide) {
-  __ profile_taken_branch(x10, x11);
+  __ profile_taken_branch(x10);
   const ByteSize be_offset = MethodCounters::backedge_counter_offset() +
                              InvocationCounter::counter_offset();
   const ByteSize inv_offset = MethodCounters::invocation_counter_offset() +
@@ -1661,7 +1658,6 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
   if (UseLoopCounter) {
     // increment backedge counter for backward branches
     // x10: MDO
-    // x11: MDO bumped taken-count
     // x12: target offset
     __ bgtz(x12, dispatch); // count only if backward branch
 
@@ -1670,12 +1666,10 @@ void TemplateTable::branch(bool is_jsr, bool is_wide) {
     __ ld(t0, Address(xmethod, Method::method_counters_offset()));
     __ bnez(t0, has_counters);
     __ push_reg(x10);
-    __ push_reg(x11);
     __ push_reg(x12);
     __ call_VM(noreg, CAST_FROM_FN_PTR(address,
             InterpreterRuntime::build_method_counters), xmethod);
     __ pop_reg(x12);
-    __ pop_reg(x11);
     __ pop_reg(x10);
     __ ld(t0, Address(xmethod, Method::method_counters_offset()));
     __ beqz(t0, dispatch); // No MethodCounters allocated, OutOfMemory
@@ -2233,13 +2227,10 @@ void TemplateTable::resolve_cache_and_index_for_field(int byte_no,
 
   assert(byte_no == f1_byte || byte_no == f2_byte, "byte_no out of range");
   __ load_field_entry(Rcache, index);
-  if (byte_no == f1_byte) {
-    __ la(temp, Address(Rcache, in_bytes(ResolvedFieldEntry::get_code_offset())));
-  } else {
-    __ la(temp, Address(Rcache, in_bytes(ResolvedFieldEntry::put_code_offset())));
-  }
+  int code_offset = (byte_no == f1_byte) ? in_bytes(ResolvedFieldEntry::get_code_offset())
+                                         : in_bytes(ResolvedFieldEntry::put_code_offset());
   // Load-acquire the bytecode to match store-release in ResolvedFieldEntry::fill_in()
-  __ lbu(temp, Address(temp, 0));
+  __ lbu(temp, Address(Rcache, code_offset));
   __ membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
   __ mv(t0, (int) code);  // have we resolved this bytecode?
   __ beq(temp, t0, resolved);
@@ -3267,7 +3258,7 @@ void TemplateTable::invokevirtual_helper(Register index,
   __ load_klass(x10, recv);
 
   // profile this call
-  __ profile_virtual_call(x10, xlocals, x13);
+  __ profile_virtual_call(x10, xlocals);
 
   // get target Method & entry point
   __ lookup_virtual_method(x10, index, method);
@@ -3377,7 +3368,6 @@ void TemplateTable::invokeinterface(int byte_no) {
   __ bind(notVFinal);
 
   // Get receiver klass into x13
-  __ restore_locals();
   __ load_klass(x13, x12);
 
   Label no_such_method;
@@ -3394,7 +3384,7 @@ void TemplateTable::invokeinterface(int byte_no) {
                              /*return_method=*/false);
 
   // profile this call
-  __ profile_virtual_call(x13, x30, x9);
+  __ profile_virtual_call(x13, x30);
 
   // Get declaring interface class from method, and itable index
   __ load_method_holder(x10, xmethod);
@@ -3512,11 +3502,10 @@ void TemplateTable::_new() {
   // This is done before loading InstanceKlass to be consistent with the order
   // how Constant Pool is update (see ConstantPool::klass_at_put)
   const int tags_offset = Array<u1>::base_offset_in_bytes();
-  __ add(t0, x10, x13);
-  __ la(t0, Address(t0, tags_offset));
-  __ lbu(t0, t0);
+  __ add(t1, x10, x13);
+  __ lbu(t1, Address(t1, tags_offset));
   __ membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
-  __ subi(t1, t0, (u1)JVM_CONSTANT_Class);
+  __ subi(t1, t1, (u1)JVM_CONSTANT_Class);
   __ bnez(t1, slow_case);
 
   // get InstanceKlass

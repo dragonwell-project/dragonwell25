@@ -184,8 +184,8 @@ class MacroAssembler: public Assembler {
   void resolve_jobject(Register value, Register tmp1, Register tmp2);
   void resolve_global_jobject(Register value, Register tmp1, Register tmp2);
 
-  void movoop(Register dst, jobject obj);
-  void mov_metadata(Register dst, Metadata* obj);
+  void movoop(Register dst, jobject obj, Register tmp = noreg);
+  void mov_metadata(Register dst, Metadata* obj, Register tmp = noreg);
   void bang_stack_size(Register size, Register tmp);
   void set_narrow_oop(Register dst, jobject obj);
   void set_narrow_klass(Register dst, Klass* k);
@@ -389,6 +389,8 @@ class MacroAssembler: public Assembler {
                            Label& L_success);
 
   Address argument_address(RegisterOrConstant arg_slot, int extra_slot_offset = 0);
+
+  void profile_receiver_type(Register recv, Register mdp, int mdp_offset);
 
   // only if +VerifyOops
   void _verify_oop(Register reg, const char* s, const char* file, int line);
@@ -646,6 +648,9 @@ class MacroAssembler: public Assembler {
   void bgez(Register Rs, const address dest);
   void bltz(Register Rs, const address dest);
   void bgtz(Register Rs, const address dest);
+
+  void cmov_zicond_eqz(Register dst, Register src, Register cond, Register tmp = t0);
+  void cmov_zicond_nez(Register dst, Register src, Register cond, Register tmp = t0);
 
   void cmov_eq(Register cmp1, Register cmp2, Register dst, Register src);
   void cmov_ne(Register cmp1, Register cmp2, Register dst, Register src);
@@ -1331,9 +1336,8 @@ public:
   void decrement(const Address dst, int64_t value = 1, Register tmp1 = t0, Register tmp2 = t1);
   void decrementw(const Address dst, int32_t value = 1, Register tmp1 = t0, Register tmp2 = t1);
 
-  void cmpptr(Register src1, const Address &src2, Label& equal, Register tmp = t0);
-
   void clinit_barrier(Register klass, Register tmp, Label* L_fast_path = nullptr, Label* L_slow_path = nullptr);
+
   void load_method_holder_cld(Register result, Register method);
   void load_method_holder(Register holder, Register method);
 
@@ -1675,7 +1679,7 @@ public:
     assert_cond(instr != nullptr);
     return extract_opcode(instr) == 0b0010011 &&
            extract_funct3(instr) == 0b101 &&
-           Assembler::extract(((unsigned*)instr)[0], 31, 26) == 0b000000;
+           Assembler::extract(Assembler::ld_instr(instr), 31, 26) == 0b000000;
   }
 
   static bool is_slli_shift_at(address instr, uint32_t shift) {

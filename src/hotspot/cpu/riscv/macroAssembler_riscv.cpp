@@ -573,6 +573,160 @@ void MacroAssembler::_verify_oop(Register reg, const char* s, const char* file, 
   BLOCK_COMMENT("} verify_oop");
 }
 
+// Handle the receiver type profile update given the "recv" klass.
+//
+// Normally updates the ReceiverData (RD) that starts at "mdp" + "mdp_offset".
+// If there are no matching or claimable receiver entries in RD, updates
+// the polymorphic counter.
+//
+// This code expected to run by either the interpreter or JIT-ed code, without
+// extra synchronization. For safety, receiver cells are claimed atomically, which
+// avoids grossly misrepresenting the profiles under concurrent updates. For speed,
+// counter updates are not atomic.
+//
+void MacroAssembler::profile_receiver_type(Register recv, Register mdp, int mdp_offset) {
+  assert_different_registers(recv, mdp, t0, t1);
+
+  int base_receiver_offset   = in_bytes(ReceiverTypeData::receiver_offset(0));
+  int end_receiver_offset    = in_bytes(ReceiverTypeData::receiver_offset(ReceiverTypeData::row_limit()));
+  int poly_count_offset      = in_bytes(CounterData::count_offset());
+  int receiver_step          = in_bytes(ReceiverTypeData::receiver_offset(1)) - base_receiver_offset;
+  int receiver_to_count_step = in_bytes(ReceiverTypeData::receiver_count_offset(0)) - base_receiver_offset;
+
+  // Adjust for MDP offsets. Slots are pointer-sized, so is the global offset.
+  base_receiver_offset += mdp_offset;
+  end_receiver_offset  += mdp_offset;
+  poly_count_offset    += mdp_offset;
+
+#ifdef ASSERT
+  // We are about to walk the MDO slots without asking for offsets.
+  // Check that our math hits all the right spots.
+  for (uint c = 0; c < ReceiverTypeData::row_limit(); c++) {
+    int real_recv_offset  = mdp_offset + in_bytes(ReceiverTypeData::receiver_offset(c));
+    int real_count_offset = mdp_offset + in_bytes(ReceiverTypeData::receiver_count_offset(c));
+    int offset = base_receiver_offset + receiver_step*c;
+    int count_offset = offset + receiver_to_count_step;
+    assert(offset == real_recv_offset, "receiver slot math");
+    assert(count_offset  == real_count_offset, "receiver count math");
+  }
+  int real_poly_count_offset = mdp_offset + in_bytes(CounterData::count_offset());
+  assert(poly_count_offset == real_poly_count_offset, "poly counter math");
+#endif
+
+  // Corner case: no profile table. Increment poly counter and exit.
+  if (ReceiverTypeData::row_limit() == 0) {
+    increment(Address(mdp, poly_count_offset), DataLayout::counter_increment);
+    return;
+  }
+
+  Register offset = t1;
+
+  Label L_loop_search_receiver, L_loop_search_empty;
+  Label L_restart, L_found_recv, L_found_empty, L_polymorphic, L_count_update;
+
+  // The code here recognizes three major cases:
+  //   A. Fastest: receiver found in the table
+  //   B. Fast: no receiver in the table, and the table is full
+  //   C. Slow: no receiver in the table, free slots in the table
+  //
+  // The case A performance is most important, as perfectly-behaved code would end up
+  // there, especially with larger TypeProfileWidth. The case B performance is
+  // important as well, this is where bulk of code would land for normally megamorphic
+  // cases. The case C performance is not essential, its job is to deal with installation
+  // races, we optimize for code density instead. Case C needs to make sure that receiver
+  // rows are only claimed once. This makes sure we never overwrite a row for another
+  // receiver and never duplicate the receivers in the list, making profile type-accurate.
+  //
+  // It is very tempting to handle these cases in a single loop, and claim the first slot
+  // without checking the rest of the table. But, profiling code should tolerate free slots
+  // in the table, as class unloading can clear them. After such cleanup, the receiver
+  // we need might be _after_ the free slot. Therefore, we need to let at least full scan
+  // to complete, before trying to install new slots. Splitting the code in several tight
+  // loops also helpfully optimizes for cases A and B.
+  //
+  // This code is effectively:
+  //
+  // restart:
+  //   // Fastest: receiver is already installed
+  //   for (i = 0; i < receiver_count(); i++) {
+  //     if (receiver(i) == recv) goto found_recv(i);
+  //   }
+  //
+  //   // Fast: no receiver, but profile is full
+  //   for (i = 0; i < receiver_count(); i++) {
+  //     if (receiver(i) == null) goto found_null(i);
+  //   }
+  //   goto polymorphic
+  //
+  //   // Slow: try to install receiver
+  // found_null(i):
+  //   CAS(&receiver(i), null, recv);
+  //   goto restart
+  //
+  // polymorphic:
+  //   count++;
+  //   return
+  //
+  // found_recv(i):
+  //   *receiver_count(i)++
+  //
+
+  bind(L_restart);
+
+  // Fastest: receiver is already installed
+  mv(offset, base_receiver_offset);
+  bind(L_loop_search_receiver);
+    add(t0, mdp, offset);
+    ld(t0, Address(t0));
+    beq(recv, t0, L_found_recv);
+  add(offset, offset, receiver_step);
+  sub(t0, offset, end_receiver_offset);
+  bnez(t0, L_loop_search_receiver);
+
+  // Fast: no receiver, but profile is full
+  mv(offset, base_receiver_offset);
+  bind(L_loop_search_empty);
+    add(t0, mdp, offset);
+    ld(t0, Address(t0));
+    beqz(t0, L_found_empty);
+  add(offset, offset, receiver_step);
+  sub(t0, offset, end_receiver_offset);
+  bnez(t0, L_loop_search_empty);
+  j(L_polymorphic);
+
+  // Slow: try to install receiver
+  bind(L_found_empty);
+
+  // Atomically swing receiver slot: null -> recv.
+  //
+  // The update uses CAS, which clobbers t0. Therefore, t1
+  // is used to hold the destination address. This is safe because the
+  // offset is no longer needed after the address is computed.
+  add(t1, mdp, offset);
+  weak_cmpxchg(/*addr*/ t1, /*expected*/ zr, /*new*/ recv, Assembler::int64,
+               /*acquire*/ Assembler::relaxed, /*release*/ Assembler::relaxed, /*result*/ t0);
+
+  // CAS success means the slot now has the receiver we want. CAS failure means
+  // something had claimed the slot concurrently: it can be the same receiver we want,
+  // or something else. Since this is a slow path, we can optimize for code density,
+  // and just restart the search from the beginning.
+  j(L_restart);
+
+  // Counter updates:
+  // Increment polymorphic counter instead of receiver slot.
+  bind(L_polymorphic);
+  mv(offset, poly_count_offset);
+  j(L_count_update);
+
+  // Found a receiver, convert its slot offset to corresponding count offset.
+  bind(L_found_recv);
+  add(offset, offset, receiver_to_count_step);
+
+  bind(L_count_update);
+  add(t1, mdp, offset);
+  increment(Address(t1), DataLayout::counter_increment);
+}
+
 void MacroAssembler::_verify_oop_addr(Address addr, const char* s, const char* file, int line) {
   if (!VerifyOops) {
     return;
@@ -1122,13 +1276,33 @@ void MacroAssembler::wrap_label(Register r1, Register r2, Label &L,
 
 #undef INSN
 
-// cmov
+// cmov_zicond_eqz: dst = (cond == 0) ? src : dst
+void MacroAssembler::cmov_zicond_eqz(Register dst, Register src, Register cond, Register tmp) {
+  assert(UseZicond, "UseZicond must be enabled");
+  assert_different_registers(dst, src, cond);
+  czero_eqz(dst, dst, cond);
+  if (src != zr) {
+    czero_nez(tmp, src, cond);
+    add(dst, dst, tmp);
+  }
+}
+
+// cmov_zicond_nez: dst = (cond != 0) ? src : dst
+void MacroAssembler::cmov_zicond_nez(Register dst, Register src, Register cond, Register tmp) {
+  assert(UseZicond, "UseZicond must be enabled");
+  assert_different_registers(dst, src, cond);
+  czero_nez(dst, dst, cond);
+  if (src != zr) {
+    czero_eqz(tmp, src, cond);
+    add(dst, dst, tmp);
+  }
+}
+
 void MacroAssembler::cmov_eq(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     xorr(t0, cmp1, cmp2);
-    czero_eqz(dst, dst, t0);
-    czero_nez(t0 , src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_eqz(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1138,11 +1312,10 @@ void MacroAssembler::cmov_eq(Register cmp1, Register cmp2, Register dst, Registe
 }
 
 void MacroAssembler::cmov_ne(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     xorr(t0, cmp1, cmp2);
-    czero_nez(dst, dst, t0);
-    czero_eqz(t0 , src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_nez(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1152,11 +1325,10 @@ void MacroAssembler::cmov_ne(Register cmp1, Register cmp2, Register dst, Registe
 }
 
 void MacroAssembler::cmov_le(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     slt(t0, cmp2, cmp1);
-    czero_eqz(dst, dst, t0);
-    czero_nez(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_eqz(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1166,11 +1338,10 @@ void MacroAssembler::cmov_le(Register cmp1, Register cmp2, Register dst, Registe
 }
 
 void MacroAssembler::cmov_leu(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     sltu(t0, cmp2, cmp1);
-    czero_eqz(dst, dst, t0);
-    czero_nez(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_eqz(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1180,11 +1351,10 @@ void MacroAssembler::cmov_leu(Register cmp1, Register cmp2, Register dst, Regist
 }
 
 void MacroAssembler::cmov_ge(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     slt(t0, cmp1, cmp2);
-    czero_eqz(dst, dst, t0);
-    czero_nez(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_eqz(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1194,11 +1364,10 @@ void MacroAssembler::cmov_ge(Register cmp1, Register cmp2, Register dst, Registe
 }
 
 void MacroAssembler::cmov_geu(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     sltu(t0, cmp1, cmp2);
-    czero_eqz(dst, dst, t0);
-    czero_nez(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_eqz(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1208,11 +1377,10 @@ void MacroAssembler::cmov_geu(Register cmp1, Register cmp2, Register dst, Regist
 }
 
 void MacroAssembler::cmov_lt(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     slt(t0, cmp1, cmp2);
-    czero_nez(dst, dst, t0);
-    czero_eqz(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_nez(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1222,11 +1390,10 @@ void MacroAssembler::cmov_lt(Register cmp1, Register cmp2, Register dst, Registe
 }
 
 void MacroAssembler::cmov_ltu(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     sltu(t0, cmp1, cmp2);
-    czero_nez(dst, dst, t0);
-    czero_eqz(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_nez(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1236,11 +1403,10 @@ void MacroAssembler::cmov_ltu(Register cmp1, Register cmp2, Register dst, Regist
 }
 
 void MacroAssembler::cmov_gt(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     slt(t0, cmp2, cmp1);
-    czero_nez(dst, dst, t0);
-    czero_eqz(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_nez(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1250,11 +1416,10 @@ void MacroAssembler::cmov_gt(Register cmp1, Register cmp2, Register dst, Registe
 }
 
 void MacroAssembler::cmov_gtu(Register cmp1, Register cmp2, Register dst, Register src) {
+  assert_different_registers(dst, src);
   if (UseZicond) {
     sltu(t0, cmp2, cmp1);
-    czero_nez(dst, dst, t0);
-    czero_eqz(t0,  src, t0);
-    orr(dst, dst, t0);
+    cmov_zicond_nez(dst, src, t0, t0);
     return;
   }
   Label no_set;
@@ -1777,15 +1942,15 @@ void MacroAssembler::vector_update_crc32(Register crc, Register buf, Register le
     mv(tmp5, 0xff);
 
     if (MaxVectorSize == 16) {
-      vsetivli(zr, N, Assembler::e32, Assembler::m4, Assembler::ma, Assembler::ta);
+      vsetivli(zr, N, Assembler::e32, Assembler::m4, Assembler::mu, Assembler::tu);
     } else if (MaxVectorSize == 32) {
-      vsetivli(zr, N, Assembler::e32, Assembler::m2, Assembler::ma, Assembler::ta);
+      vsetivli(zr, N, Assembler::e32, Assembler::m2, Assembler::mu, Assembler::tu);
     } else {
       assert(MaxVectorSize > 32, "sanity");
-      vsetivli(zr, N, Assembler::e32, Assembler::m1, Assembler::ma, Assembler::ta);
+      vsetivli(zr, N, Assembler::e32, Assembler::m1, Assembler::mu, Assembler::tu);
     }
 
-    vmv_v_x(vcrc, zr);
+    vmv_v_i(vcrc, 0);
     vmv_s_x(vcrc, crc);
 
     // multiple of 64
@@ -1930,7 +2095,7 @@ void MacroAssembler::kernel_crc32_vclmul_fold_vectorsize_16(Register crc, Regist
   vle64_v(v6, buf); addi(buf, buf, STEP);
   vle64_v(v7, buf); addi(buf, buf, STEP);
 
-  vmv_v_x(v31, zr);
+  vmv_v_i(v31, 0);
   vsetivli(zr, 1, Assembler::e32, Assembler::m1, Assembler::mu, Assembler::tu);
   vmv_s_x(v31, crc);
   vsetivli(zr, N, Assembler::e64, Assembler::m1, Assembler::mu, Assembler::tu);
@@ -2053,7 +2218,7 @@ void MacroAssembler::kernel_crc32_vclmul_fold_vectorsize_32(Register crc, Regist
   //    now, v1 should contains: 010101...
 
   // initial crc
-  vmv_v_x(v24, zr);
+  vmv_v_i(v24, 0);
   vsetivli(zr, 1, Assembler::e32, Assembler::m4, Assembler::mu, Assembler::tu);
   vmv_s_x(v24, crc);
   vsetivli(zr, N, Assembler::e64, Assembler::m4, Assembler::mu, Assembler::tu);
@@ -2442,8 +2607,8 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, int vector_size_in_byte
 }
 
 static int patch_offset_in_jal(address branch, int64_t offset) {
-  assert(Assembler::is_simm21(offset) && ((offset % 2) == 0),
-         "offset (%ld) is too large to be patched in one jal instruction!\n", offset);
+  guarantee(Assembler::is_simm21(offset) && ((offset % 2) == 0),
+            "offset (%ld) is too large to be patched in one jal instruction!", offset);
   Assembler::patch(branch, 31, 31, (offset >> 20) & 0x1);                       // offset[20]    ==> branch[31]
   Assembler::patch(branch, 30, 21, (offset >> 1)  & 0x3ff);                     // offset[10:1]  ==> branch[30:21]
   Assembler::patch(branch, 20, 20, (offset >> 11) & 0x1);                       // offset[11]    ==> branch[20]
@@ -2452,8 +2617,8 @@ static int patch_offset_in_jal(address branch, int64_t offset) {
 }
 
 static int patch_offset_in_conditional_branch(address branch, int64_t offset) {
-  assert(Assembler::is_simm13(offset) && ((offset % 2) == 0),
-         "offset (%ld) is too large to be patched in one beq/bge/bgeu/blt/bltu/bne instruction!\n", offset);
+  guarantee(Assembler::is_simm13(offset) && ((offset % 2) == 0),
+            "offset (%ld) is too large to be patched in one beq/bge/bgeu/blt/bltu/bne instruction!", offset);
   Assembler::patch(branch, 31, 31, (offset >> 12) & 0x1);                       // offset[12]    ==> branch[31]
   Assembler::patch(branch, 30, 25, (offset >> 5)  & 0x3f);                      // offset[10:5]  ==> branch[30:25]
   Assembler::patch(branch, 7,  7,  (offset >> 11) & 0x1);                       // offset[11]    ==> branch[7]
@@ -3149,7 +3314,7 @@ void MacroAssembler::cmp_klass_compressed(Register oop, Register trial_klass, Re
 }
 
 // Move an oop into a register.
-void MacroAssembler::movoop(Register dst, jobject obj) {
+void MacroAssembler::movoop(Register dst, jobject obj, Register tmp) {
   int oop_index;
   if (obj == nullptr) {
     oop_index = oop_recorder()->allocate_oop_index(obj);
@@ -3165,7 +3330,7 @@ void MacroAssembler::movoop(Register dst, jobject obj) {
   RelocationHolder rspec = oop_Relocation::spec(oop_index);
 
   if (BarrierSet::barrier_set()->barrier_set_assembler()->supports_instruction_patching()) {
-    movptr(dst, Address((address)obj, rspec));
+    movptr(dst, Address((address)obj, rspec), tmp);
   } else {
     address dummy = address(uintptr_t(pc()) & -wordSize); // A nearby aligned address
     ld(dst, Address(dummy, rspec));
@@ -3173,7 +3338,7 @@ void MacroAssembler::movoop(Register dst, jobject obj) {
 }
 
 // Move a metadata address into a register.
-void MacroAssembler::mov_metadata(Register dst, Metadata* obj) {
+void MacroAssembler::mov_metadata(Register dst, Metadata* obj, Register tmp) {
   assert((uintptr_t)obj < (1ull << 48), "48-bit overflow in metadata");
   int oop_index;
   if (obj == nullptr) {
@@ -3182,7 +3347,7 @@ void MacroAssembler::mov_metadata(Register dst, Metadata* obj) {
     oop_index = oop_recorder()->find_index(obj);
   }
   RelocationHolder rspec = metadata_Relocation::spec(oop_index);
-  movptr(dst, Address((address)obj, rspec));
+  movptr(dst, Address((address)obj, rspec), tmp);
 }
 
 // Writes to stack successive pages until offset reached to check for
@@ -3294,11 +3459,17 @@ void MacroAssembler::encode_heap_oop(Register d, Register s) {
       mv(d, s);
     }
   } else {
-    Label notNull;
-    sub(d, s, xheapbase);
-    bgez(d, notNull);
-    mv(d, zr);
-    bind(notNull);
+    if (UseZicond) {
+      assert_different_registers(s, t0);
+      sub(t0, s, xheapbase);
+      czero_eqz(d, t0, s);  // d = s == 0 ? 0 : t0
+    } else {
+      Label notNull;
+      sub(d, s, xheapbase);
+      bgez(d, notNull);
+      mv(d, zr);
+      bind(notNull);
+    }
     if (CompressedOops::shift() != 0) {
       assert (LogMinObjAlignmentInBytes == CompressedOops::shift(), "decode alg wrong");
       srli(d, d, CompressedOops::shift());
@@ -3486,11 +3657,18 @@ void  MacroAssembler::decode_heap_oop(Register d, Register s) {
       slli(d, s, CompressedOops::shift());
     }
   } else {
-    Label done;
-    mv(d, s);
-    beqz(s, done);
-    shadd(d, s, xheapbase, d, LogMinObjAlignmentInBytes);
-    bind(done);
+    assert(LogMinObjAlignmentInBytes == CompressedOops::shift(), "decode alg wrong");
+    if (UseZicond) {
+      assert_different_registers(s, t0);
+      shadd(t0, s, xheapbase, t0, LogMinObjAlignmentInBytes);
+      czero_eqz(d, t0, s);   // d = s == 0 ? 0 : t0
+    } else {
+      Label done;
+      mv(d, s);
+      beqz(s, done);
+      shadd(d, s, xheapbase, d, LogMinObjAlignmentInBytes);
+      bind(done);
+    }
   }
   verify_oop_msg(d, "broken oop in decode_heap_oop");
 }
@@ -3920,7 +4098,7 @@ void MacroAssembler::cmpxchg_narrow_value(Register addr, Register expected,
     // Or in the new value to create complete new value.
     orr(scratch0, scratch0, new_val);
 
-    mv(scratch1, result); // save our expected value
+    // scratch1 holds the expected word.
     atomic_cas(result, scratch0, aligned_addr, operand_size::int32, acquire, release);
     bne(scratch1, result, retry);
   } else {
@@ -3994,7 +4172,7 @@ void MacroAssembler::weak_cmpxchg_narrow_value(Register addr, Register expected,
     // Or in the new value to create complete new value.
     orr(scratch0, scratch0, new_val);
 
-    mv(scratch1, result); // save our expected value
+    // scratch1 holds the expected word.
     atomic_cas(result, scratch0, aligned_addr, operand_size::int32, acquire, release);
     bne(scratch1, result, fail); // This weak, so just bail-out.
   } else {
@@ -5167,13 +5345,6 @@ void MacroAssembler::decrementw(const Address dst, int32_t value, Register tmp1,
   sw(tmp1, adr);
 }
 
-void MacroAssembler::cmpptr(Register src1, const Address &src2, Label& equal, Register tmp) {
-  assert_different_registers(src1, tmp);
-  assert(src2.getMode() == Address::literal, "must be applied to a literal address");
-  ld(tmp, src2);
-  beq(src1, tmp, equal);
-}
-
 void MacroAssembler::load_method_holder_cld(Register result, Register method) {
   load_method_holder(result, method);
   ld(result, Address(result, InstanceKlass::class_loader_data_offset()));
@@ -5375,7 +5546,7 @@ void MacroAssembler::multiply_64_x_64_loop(Register x, Register xstart, Register
   mulhu(t0, x_xstart, y_idx);
   mul(product, x_xstart, y_idx);
   cad(product, product, carry, t1);
-  adc(carry, t0, zr, t1);
+  add(carry, t0, t1);
 
   subiw(kdx, kdx, 2);
   ror(product, product, 32); // back to big-endian
@@ -5455,12 +5626,12 @@ void MacroAssembler::multiply_128_x_128_loop(Register y, Register z,
   mulhu(carry2, product_hi, yz_idx2);
 
   cad(tmp3, tmp3, carry, carry);
-  adc(tmp4, tmp4, zr, carry);
+  add(tmp4, tmp4, carry);
   cad(tmp3, tmp3, t0, t0);
   cadc(tmp4, tmp4, tmp, t0);
-  adc(carry, carry2, zr, t0);
+  add(carry, carry2, t0);
   cad(tmp4, tmp4, t1, carry2);
-  adc(carry, carry, zr, carry2);
+  add(carry, carry, carry2);
 
   ror(tmp3, tmp3, 32); // convert little-endian to big-endian
   ror(tmp4, tmp4, 32);
