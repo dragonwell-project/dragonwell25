@@ -554,15 +554,10 @@ void C2_MacroAssembler::fast_unlock_lightweight(Register obj, Register box,
 
     bind(not_recursive);
 
-    const Register tmp2_owner_addr = tmp2;
-
-    // Compute owner address.
-    la(tmp2_owner_addr, Address(tmp1_monitor, ObjectMonitor::owner_offset()));
-
     // Set owner to null.
     // Release to satisfy the JMM
     membar(MacroAssembler::LoadStore | MacroAssembler::StoreStore);
-    sd(zr, Address(tmp2_owner_addr));
+    sd(zr, Address(tmp1_monitor, ObjectMonitor::owner_offset()));
     // We need a full fence after clearing owner to avoid stranding.
     // StoreLoad achieves this.
     membar(StoreLoad);
@@ -608,6 +603,7 @@ void C2_MacroAssembler::fast_unlock_lightweight(Register obj, Register box,
 // StringLatin1.indexOfChar
 void C2_MacroAssembler::string_indexof_char_short(Register str1, Register cnt1,
                                                   Register ch, Register result,
+                                                  Register start_index,
                                                   bool isL)
 {
   Register ch1 = t0;
@@ -700,7 +696,7 @@ void C2_MacroAssembler::string_indexof_char_short(Register str1, Register cnt1,
   addi(index, index, 7);
 
   bind(MATCH);
-  mv(result, index);
+  add(result, start_index, index);
   bind(NOMATCH);
   BLOCK_COMMENT("} string_indexof_char_short");
 }
@@ -713,39 +709,40 @@ void C2_MacroAssembler::string_indexof_char(Register str1, Register cnt1,
                                             Register tmp3, Register tmp4,
                                             bool isL)
 {
-  Label CH1_LOOP, HIT, NOMATCH, DONE, DO_LONG;
+  Label CH1_LOOP, HIT, DONE, SHORT;
   Register ch1 = t0;
   Register orig_cnt = t1;
-  Register mask1 = tmp3;
+  Register mask1 = tmp1;
   Register mask2 = tmp2;
-  Register match_mask = tmp1;
-  Register trailing_char = tmp4;
-  Register unaligned_elems = tmp4;
+  Register match_mask = tmp3;
+  Register loop_step = tmp4;
+  Register trailing_chars = tmp4;
+  Register unaligned_chars = tmp4;
+  Register start_index = tmp4;
 
   BLOCK_COMMENT("string_indexof_char {");
-  beqz(cnt1, NOMATCH);
+  mv(result, -1);
+  beqz(cnt1, DONE);
 
   subi(t0, cnt1, isL ? 32 : 16);
-  bgtz(t0, DO_LONG);
-  string_indexof_char_short(str1, cnt1, ch, result, isL);
-  j(DONE);
+  mv(start_index, zr);
+  blez(t0, SHORT);
 
-  bind(DO_LONG);
   mv(orig_cnt, cnt1);
   if (AvoidUnalignedAccesses) {
     Label ALIGNED;
-    andi(unaligned_elems, str1, 0x7);
-    beqz(unaligned_elems, ALIGNED);
-    sub(unaligned_elems, unaligned_elems, 8);
-    neg(unaligned_elems, unaligned_elems);
+    andi(unaligned_chars, str1, 0x7);
+    beqz(unaligned_chars, ALIGNED);
+    sub(unaligned_chars, unaligned_chars, 8);
+    neg(unaligned_chars, unaligned_chars);
     if (!isL) {
-      srli(unaligned_elems, unaligned_elems, 1);
+      srli(unaligned_chars, unaligned_chars, 1);
     }
     // do unaligned part per element
-    string_indexof_char_short(str1, unaligned_elems, ch, result, isL);
+    string_indexof_char_short(str1, unaligned_chars, ch, result, zr, isL);
     bgez(result, DONE);
     mv(orig_cnt, cnt1);
-    sub(cnt1, cnt1, unaligned_elems);
+    sub(cnt1, cnt1, unaligned_chars);
     bind(ALIGNED);
   }
 
@@ -770,33 +767,47 @@ void C2_MacroAssembler::string_indexof_char(Register str1, Register cnt1,
   uint64_t mask7fff = UCONST64(0x7fff7fff7fff7fff);
   mv(mask2, isL ? mask7f7f : mask7fff);
 
+  mv(loop_step, 8);
+
   bind(CH1_LOOP);
   ld(ch1, Address(str1));
-  addi(str1, str1, 8);
-  subi(cnt1, cnt1, 8);
   compute_match_mask(ch1, ch, match_mask, mask1, mask2);
   bnez(match_mask, HIT);
-  bgtz(cnt1, CH1_LOOP);
-  j(NOMATCH);
+  addi(str1, str1, 8);
+  subi(cnt1, cnt1, 8);
+  bge(cnt1, loop_step, CH1_LOOP);
+
+  beqz(cnt1, DONE);
+  if (!isL) {
+    srli(cnt1, cnt1, 1);
+  }
+  // Tail (1..7 chars) after the SWAR loop has advanced str1. cnt1 holds the
+  // remaining char count; the number of chars already scanned by the loop is
+  // (orig_cnt - cnt1). string_indexof_char_short returns an index relative to
+  // the current str1, so we pass that prefix as start_index to recover the
+  // real index.
+  // Note: ch was broadcast across all 8 bytes for the SWAR loop above, but the
+  // short helper compares a single element, so restore ch to a single char.
+  isL ? zext(ch, ch, 8) : zext(ch, ch, 16);
+  sub(start_index, orig_cnt, cnt1);
+
+  bind(SHORT);
+  string_indexof_char_short(str1, cnt1, ch, result, start_index, isL);
+  j(DONE);
 
   bind(HIT);
   // count bits of trailing zero chars
-  ctzc_bits(trailing_char, match_mask, isL, ch1, result);
-  srli(trailing_char, trailing_char, 3);
-  addi(cnt1, cnt1, 8);
-  ble(cnt1, trailing_char, NOMATCH);
+  ctzc_bits(trailing_chars, match_mask, isL, mask1, mask2);
+  srli(trailing_chars, trailing_chars, 3);
+
   // match case
   if (!isL) {
     srli(cnt1, cnt1, 1);
-    srli(trailing_char, trailing_char, 1);
+    srli(trailing_chars, trailing_chars, 1);
   }
 
   sub(result, orig_cnt, cnt1);
-  add(result, result, trailing_char);
-  j(DONE);
-
-  bind(NOMATCH);
-  mv(result, -1);
+  add(result, result, trailing_chars);
 
   bind(DONE);
   BLOCK_COMMENT("} string_indexof_char");
@@ -1917,6 +1928,7 @@ void C2_MacroAssembler::arrays_hashcode(Register ary, Register cnt, Register res
                                         Register tmp4, Register tmp5, Register tmp6,
                                         BasicType eltype)
 {
+  assert(!UseRVV, "sanity");
   assert_different_registers(ary, cnt, result, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, t0, t1);
 
   const int elsize = arrays_hashcode_elsize(eltype);
@@ -1989,29 +2001,143 @@ void C2_MacroAssembler::arrays_hashcode(Register ary, Register cnt, Register res
   BLOCK_COMMENT("} // arrays_hashcode");
 }
 
+void C2_MacroAssembler::arrays_hashcode_v(Register ary, Register cnt, Register result,
+                                          Register tmp1, Register tmp2, Register tmp3,
+                                          BasicType eltype)
+{
+  assert(UseRVV, "sanity");
+  assert(StubRoutines::riscv::arrays_hashcode_powers_of_31() != nullptr, "sanity");
+  assert_different_registers(ary, cnt, result, tmp1, tmp2, tmp3, t0, t1);
+
+  // The MaxVectorSize should have been set by detecting RVV max vector register
+  // size when check UseRVV (i.e. MaxVectorSize == VM_Version::_initial_vector_length).
+  // Let's use T_INT as all hashCode calculations eventually deal with ints.
+  const int lmul = 2;
+  const int stride = MaxVectorSize / sizeof(jint) * lmul;
+
+  const int elsize_bytes = arrays_hashcode_elsize(eltype);
+  const int elsize_shift = exact_log2(elsize_bytes);
+
+  switch (eltype) {
+    case T_BOOLEAN: BLOCK_COMMENT("arrays_hashcode_v(unsigned byte) {"); break;
+    case T_CHAR:    BLOCK_COMMENT("arrays_hashcode_v(char) {");          break;
+    case T_BYTE:    BLOCK_COMMENT("arrays_hashcode_v(byte) {");          break;
+    case T_SHORT:   BLOCK_COMMENT("arrays_hashcode_v(short) {");         break;
+    case T_INT:     BLOCK_COMMENT("arrays_hashcode_v(int) {");           break;
+    default:
+      ShouldNotReachHere();
+  }
+
+  const Register pow31_highest = tmp1;
+  const Register ary_end       = tmp2;
+  const Register consumed      = tmp3;
+
+  const VectorRegister v_sum    = v2;
+  const VectorRegister v_src    = v4;
+  const VectorRegister v_coeffs = v6;
+  const VectorRegister v_tmp    = v8;
+
+  const address adr_pows31 = StubRoutines::riscv::arrays_hashcode_powers_of_31()
+                           + sizeof(jint);
+  Label VEC_LOOP, DONE, SCALAR_TAIL, SCALAR_TAIL_LOOP;
+
+  // NB: at this point (a) 'result' already has some value,
+  // (b) 'cnt' is not 0 or 1, see java code for details.
+
+  andi(t0, cnt, ~(stride - 1));
+  beqz(t0, SCALAR_TAIL);
+
+  la(t1, ExternalAddress(adr_pows31));
+  lw(pow31_highest, Address(t1, -1 * sizeof(jint)));
+
+  vsetvli(consumed, cnt, Assembler::e32, Assembler::m2);
+  vle32_v(v_coeffs, t1); // 31^^(stride - 1) ... 31^^0
+  vmv_v_i(v_sum, 0);
+
+  bind(VEC_LOOP);
+  arrays_hashcode_elload_v(v_src, v_tmp, ary, eltype);
+  vmul_vv(v_src, v_src, v_coeffs);
+  vmadd_vx(v_sum, pow31_highest, v_src);
+  mulw(result, result, pow31_highest);
+  shadd(ary, consumed, ary, t0, elsize_shift);
+  subw(cnt, cnt, consumed);
+  andi(t1, cnt, ~(stride - 1));
+  bnez(t1, VEC_LOOP);
+
+  vmv_s_x(v_tmp, x0);
+  vredsum_vs(v_sum, v_sum, v_tmp);
+  vmv_x_s(t0, v_sum);
+  addw(result, result, t0);
+  beqz(cnt, DONE);
+
+  bind(SCALAR_TAIL);
+  shadd(ary_end, cnt, ary, t0, elsize_shift);
+
+  bind(SCALAR_TAIL_LOOP);
+  arrays_hashcode_elload(t0, Address(ary), eltype);
+  slli(t1, result, 5);      // optimize 31 * result
+  subw(result, t1, result); // with result<<5 - result
+  addw(result, result, t0);
+  addi(ary, ary, elsize_bytes);
+  bne(ary, ary_end, SCALAR_TAIL_LOOP);
+
+  bind(DONE);
+  BLOCK_COMMENT("} // arrays_hashcode_v");
+}
+
 int C2_MacroAssembler::arrays_hashcode_elsize(BasicType eltype) {
   switch (eltype) {
-  case T_BOOLEAN: return sizeof(jboolean);
-  case T_BYTE:    return sizeof(jbyte);
-  case T_SHORT:   return sizeof(jshort);
-  case T_CHAR:    return sizeof(jchar);
-  case T_INT:     return sizeof(jint);
-  default:
-    ShouldNotReachHere();
-    return -1;
+    case T_BOOLEAN: return sizeof(jboolean);
+    case T_BYTE:    return sizeof(jbyte);
+    case T_SHORT:   return sizeof(jshort);
+    case T_CHAR:    return sizeof(jchar);
+    case T_INT:     return sizeof(jint);
+    default:
+      ShouldNotReachHere();
+      return -1;
   }
 }
 
 void C2_MacroAssembler::arrays_hashcode_elload(Register dst, Address src, BasicType eltype) {
   switch (eltype) {
-  // T_BOOLEAN used as surrogate for unsigned byte
-  case T_BOOLEAN: lbu(dst, src);   break;
-  case T_BYTE:     lb(dst, src);   break;
-  case T_SHORT:    lh(dst, src);   break;
-  case T_CHAR:    lhu(dst, src);   break;
-  case T_INT:      lw(dst, src);   break;
-  default:
-    ShouldNotReachHere();
+    // T_BOOLEAN used as surrogate for unsigned byte
+    case T_BOOLEAN: lbu(dst, src);   break;
+    case T_BYTE:     lb(dst, src);   break;
+    case T_SHORT:    lh(dst, src);   break;
+    case T_CHAR:    lhu(dst, src);   break;
+    case T_INT:      lw(dst, src);   break;
+    default:
+      ShouldNotReachHere();
+  }
+}
+
+void C2_MacroAssembler::arrays_hashcode_elload_v(VectorRegister vdst,
+                                                 VectorRegister vtmp,
+                                                 Register src,
+                                                 BasicType eltype) {
+  assert_different_registers(vdst, vtmp);
+  switch (eltype) {
+    case T_BOOLEAN:
+      vle8_v(vtmp, src);
+      vzext_vf4(vdst, vtmp);
+      break;
+    case T_BYTE:
+      vle8_v(vtmp, src);
+      vsext_vf4(vdst, vtmp);
+      break;
+    case T_CHAR:
+      vle16_v(vtmp, src);
+      vzext_vf2(vdst, vtmp);
+      break;
+    case T_SHORT:
+      vle16_v(vtmp, src);
+      vsext_vf2(vdst, vtmp);
+      break;
+    case T_INT:
+      vle32_v(vdst, src);
+      break;
+    default:
+      ShouldNotReachHere();
   }
 }
 
@@ -2110,47 +2236,49 @@ void C2_MacroAssembler::enc_cmpEqNe_imm0_branch(int cmpFlag, Register op1, Label
 }
 
 void C2_MacroAssembler::enc_cmove(int cmpFlag, Register op1, Register op2, Register dst, Register src) {
-  bool is_unsigned = (cmpFlag & unsigned_branch_mask) == unsigned_branch_mask;
-  int op_select = cmpFlag & (~unsigned_branch_mask);
+  if (dst != src) {
+    bool is_unsigned = (cmpFlag & unsigned_branch_mask) == unsigned_branch_mask;
+    int op_select = cmpFlag & (~unsigned_branch_mask);
 
-  switch (op_select) {
-    case BoolTest::eq:
-      cmov_eq(op1, op2, dst, src);
-      break;
-    case BoolTest::ne:
-      cmov_ne(op1, op2, dst, src);
-      break;
-    case BoolTest::le:
-      if (is_unsigned) {
-        cmov_leu(op1, op2, dst, src);
-      } else {
-        cmov_le(op1, op2, dst, src);
-      }
-      break;
-    case BoolTest::ge:
-      if (is_unsigned) {
-        cmov_geu(op1, op2, dst, src);
-      } else {
-        cmov_ge(op1, op2, dst, src);
-      }
-      break;
-    case BoolTest::lt:
-      if (is_unsigned) {
-        cmov_ltu(op1, op2, dst, src);
-      } else {
-        cmov_lt(op1, op2, dst, src);
-      }
-      break;
-    case BoolTest::gt:
-      if (is_unsigned) {
-        cmov_gtu(op1, op2, dst, src);
-      } else {
-        cmov_gt(op1, op2, dst, src);
-      }
-      break;
-    default:
-      assert(false, "unsupported compare condition");
-      ShouldNotReachHere();
+    switch (op_select) {
+      case BoolTest::eq:
+        cmov_eq(op1, op2, dst, src);
+        break;
+      case BoolTest::ne:
+        cmov_ne(op1, op2, dst, src);
+        break;
+      case BoolTest::le:
+        if (is_unsigned) {
+          cmov_leu(op1, op2, dst, src);
+        } else {
+          cmov_le(op1, op2, dst, src);
+        }
+        break;
+      case BoolTest::ge:
+        if (is_unsigned) {
+          cmov_geu(op1, op2, dst, src);
+        } else {
+          cmov_ge(op1, op2, dst, src);
+        }
+        break;
+      case BoolTest::lt:
+        if (is_unsigned) {
+          cmov_ltu(op1, op2, dst, src);
+        } else {
+          cmov_lt(op1, op2, dst, src);
+        }
+        break;
+      case BoolTest::gt:
+        if (is_unsigned) {
+          cmov_gtu(op1, op2, dst, src);
+        } else {
+          cmov_gt(op1, op2, dst, src);
+        }
+        break;
+      default:
+        assert(false, "unsupported compare condition");
+        ShouldNotReachHere();
+    }
   }
 }
 
@@ -2351,8 +2479,11 @@ static void float16_to_float_slow_path(C2_MacroAssembler& masm, C2GeneralStub<Fl
   // construct a NaN in 32 bits from the NaN in 16 bits,
   // we need the payloads of non-canonical NaNs to be preserved.
   __ mv(tmp, 0x7f800000);
-  // sign-bit was already set via sign-extension if necessary.
-  __ slli(t0, src, 13);
+  // The upper 16 bits of a short argument are unspecified. Sign-extend the
+  // low 16 bits before shifting so that the float sign bit comes from the
+  // float16 sign bit.
+  __ sext(t0, src, 16);
+  __ slli(t0, t0, 13);
   __ orr(tmp, t0, tmp);
   __ fmv_w_x(dst, tmp);
 
@@ -2362,7 +2493,7 @@ static void float16_to_float_slow_path(C2_MacroAssembler& masm, C2GeneralStub<Fl
 
 // j.l.Float.float16ToFloat
 void C2_MacroAssembler::float16_to_float(FloatRegister dst, Register src, Register tmp) {
-  auto stub = C2CodeStub::make<FloatRegister, Register, Register>(dst, src, tmp, 20, float16_to_float_slow_path);
+  auto stub = C2CodeStub::make<FloatRegister, Register, Register>(dst, src, tmp, 28, float16_to_float_slow_path);
 
   // On riscv, NaN needs a special process as fcvt does not work in that case.
   // On riscv, Inf does not need a special process as fcvt can handle it correctly.
@@ -2614,7 +2745,7 @@ void C2_MacroAssembler::java_round_float_v(VectorRegister dst, VectorRegister sr
   // replacing vfclass with feq as performance optimization
   vmfeq_vv(v0, src, src);
   // set dst = 0 in cases of NaN
-  vmv_v_x(dst, zr);
+  vmv_v_i(dst, 0);
 
   // dst = (src + 0.5) rounded down towards negative infinity
   vfadd_vf(dst, src, ftmp, Assembler::v0_t);
@@ -2638,7 +2769,7 @@ void C2_MacroAssembler::java_round_double_v(VectorRegister dst, VectorRegister s
   // replacing vfclass with feq as performance optimization
   vmfeq_vv(v0, src, src);
   // set dst = 0 in cases of NaN
-  vmv_v_x(dst, zr);
+  vmv_v_i(dst, 0);
 
   // dst = (src + 0.5) rounded down towards negative infinity
   vfadd_vf(dst, src, ftmp, Assembler::v0_t);
@@ -2696,7 +2827,7 @@ void C2_MacroAssembler::clear_array_v(Register base, Register cnt) {
 
   // making zero words
   vsetvli(t0, cnt, Assembler::e64, Assembler::m4);
-  vxor_vv(v4, v4, v4);
+  vmv_v_i(v4, 0);
 
   bind(loop);
   vsetvli(t0, cnt, Assembler::e64, Assembler::m4);
@@ -3290,7 +3421,7 @@ void C2_MacroAssembler::integer_narrow_v(VectorRegister dst, BasicType dst_bt, u
 #define VFCVT_SAFE(VFLOATCVT)                                                      \
 void C2_MacroAssembler::VFLOATCVT##_safe(VectorRegister dst, VectorRegister src) { \
   assert_different_registers(dst, src);                                            \
-  vxor_vv(dst, dst, dst);                                                          \
+  vmv_v_i(dst, 0);                                                                 \
   vmfeq_vv(v0, src, src);                                                          \
   VFLOATCVT(dst, src, Assembler::v0_t);                                            \
 }

@@ -3599,7 +3599,7 @@ class StubGenerator: public StubCodeGenerator {
       subi(t0, tmp0, 1);
       sltu(t0, t0, tmp0); // Set carry iff tmp0 is nonzero
       cadc(tmp0, tmp1, Rhi_mn, t0);
-      adc(tmp1, tmp2, zr, t0);
+      add(tmp1, tmp2, t0);
       mv(tmp2, zr);
     }
 
@@ -3654,7 +3654,7 @@ class StubGenerator: public StubCodeGenerator {
 
       // tmp0 = tmp1; tmp1 = tmp2; tmp2 = 0;
       cadc(tmp0, tmp1, Rhi_mn, t0); // The pending m*n, high part
-      adc(tmp1, tmp2, zr, t0);
+      add(tmp1, tmp2, t0);
       mv(tmp2, zr);
     }
 
@@ -3792,7 +3792,7 @@ class StubGenerator: public StubCodeGenerator {
       subi(t0, tmp0, 1);
       sltu(t0, t0, tmp0); // Set carry iff tmp0 is nonzero
       cadc(tmp0, tmp1, Rhi_mn, t0);
-      adc(tmp1, tmp2, zr, t0);
+      add(tmp1, tmp2, t0);
       mv(tmp2, zr);
     }
 
@@ -3801,7 +3801,7 @@ class StubGenerator: public StubCodeGenerator {
              Register tmp0, Register tmp1, Register tmp2) {
       cad(tmp0, tmp0, Rlo, t0);
       cadc(tmp1, tmp1, Rhi, t0);
-      adc(tmp2, tmp2, zr, t0);
+      add(tmp2, tmp2, t0);
     }
 
   public:
@@ -6315,8 +6315,11 @@ class StubGenerator: public StubCodeGenerator {
     // construct a NaN in 32 bits from the NaN in 16 bits,
     // we need the payloads of non-canonical NaNs to be preserved.
     __ mv(t1, 0x7f800000);
-    // sign-bit was already set via sign-extension if necessary.
-    __ slli(t0, src, 13);
+    // The upper 16 bits of a short argument are unspecified. Sign-extend the
+    // low 16 bits before shifting so that the float sign bit comes from the
+    // float16 sign bit.
+    __ sext(t0, src, 16);
+    __ slli(t0, t0, 13);
     __ orr(t1, t0, t1);
     __ fmv_w_x(dst, t1);
 
@@ -6569,6 +6572,24 @@ static const int64_t right_3_bits = right_n_bits(3);
     return start;
   }
 
+  address generate_arrays_hashcode_powers_of_31() {
+    assert(UseRVV, "sanity");
+    const int lmul = 2;
+    const int stride = MaxVectorSize / sizeof(jint) * lmul;
+    __ align(CodeEntryAlignment);
+    StubCodeMark mark(this, "StubRoutines", "arrays_hashcode_powers_of_31");
+    address start = __ pc();
+    for (int i = stride; i >= 0; i--) {
+        jint power_of_31 = 1;
+        for (int j = i; j > 0; j--) {
+          power_of_31 = java_multiply(power_of_31, 31);
+        }
+        __ emit_int32(power_of_31);
+    }
+
+    return start;
+  }
+
 #endif // COMPILER2
 
   /**
@@ -6759,6 +6780,10 @@ static const int64_t right_3_bits = right_n_bits(3);
     if (UseRVV) {
       StubRoutines::_bigIntegerLeftShiftWorker = generate_bigIntegerLeftShift();
       StubRoutines::_bigIntegerRightShiftWorker = generate_bigIntegerRightShift();
+    }
+
+    if (UseVectorizedHashCodeIntrinsic && UseRVV) {
+      StubRoutines::riscv::_arrays_hashcode_powers_of_31 = generate_arrays_hashcode_powers_of_31();
     }
 
     if (UseSHA256Intrinsics) {

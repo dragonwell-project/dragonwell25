@@ -1073,9 +1073,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   }
 
   // start execution
-#ifdef ASSERT
   __ verify_frame_setup();
-#endif
 
   // jvmti support
   __ notify_method_entry();
@@ -1182,10 +1180,9 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 #endif
 
   // Change state to native
-  __ la(t1, Address(xthread, JavaThread::thread_state_offset()));
-  __ mv(t0, _thread_in_native);
+  __ mv(t1, _thread_in_native);
   __ membar(MacroAssembler::LoadStore | MacroAssembler::StoreStore);
-  __ sw(t0, Address(t1));
+  __ sw(t1, Address(xthread, JavaThread::thread_state_offset()));
 
   __ push_cont_fastpath();
 
@@ -1215,7 +1212,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   // Force all preceding writes to be observed prior to thread state change
   __ membar(MacroAssembler::LoadStore | MacroAssembler::StoreStore);
 
-  __ mv(t0, _thread_in_native_trans);
+  __ mv(t0, _thread_in_vm);
   __ sw(t0, Address(xthread, JavaThread::thread_state_offset()));
 
   // Force this write out before the read below
@@ -1544,9 +1541,7 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
   }
 
   // start execution
-#ifdef ASSERT
   __ verify_frame_setup();
-#endif
 
   // jvmti support
   __ notify_method_entry();

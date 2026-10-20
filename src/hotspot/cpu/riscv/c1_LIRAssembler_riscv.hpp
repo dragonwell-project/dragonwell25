@@ -43,6 +43,11 @@ private:
 
   Address as_Address(LIR_Address* addr, Register tmp);
 
+  void mem2reg(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_PatchCode patch_code,
+               CodeEmitInfo* info, bool wide, bool is_volatile);
+  void load_unordered(LIR_Address* from_addr, LIR_Opr dest, BasicType type, bool wide, CodeEmitInfo* info);
+  void load_volatile(LIR_Address* from_addr, LIR_Opr dest, BasicType type, CodeEmitInfo* info);
+
   // helper functions which checks for overflow and sets bailout if it
   // occurs.  Always returns a valid embeddable pointer but in the
   // bailout case the pointer won't be to unique storage.
@@ -54,9 +59,8 @@ private:
   Address stack_slot_address(int index, uint shift, int adjust = 0);
 
   // Record the type of the receiver in ReceiverTypeData
-  void type_profile_helper(Register mdo,
-                           ciMethodData *md, ciProfileData *data,
-                           Register recv, Label* update_done);
+  void type_profile_helper(Register mdo, ciMethodData *md,
+                           ciProfileData *data, Register recv);
 
   void casw(Register addr, Register newval, Register cmpval);
   void caswu(Register addr, Register newval, Register cmpval);
