@@ -29,6 +29,7 @@ on:
   pull_request:
     branches:
       - master
+      - 'riscv*'
   push:
     branches-ignore:
       - pr/*
@@ -60,7 +61,7 @@ jobs:
     name: 'Check Commit Message'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - uses: dragonwell-releng/check_commit_action@master
     if: github.event_name == 'pull_request'
 
