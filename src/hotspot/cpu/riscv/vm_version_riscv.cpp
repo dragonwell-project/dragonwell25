@@ -426,6 +426,15 @@ void VM_Version::c2_initialize() {
       warning("UseAESIntrinsics enabled, but UseAES not, enabling");
       UseAES = true;
     }
+
+    if (FLAG_IS_DEFAULT(UseAESCTRIntrinsics) && UseZbb) {
+      FLAG_SET_DEFAULT(UseAESCTRIntrinsics, true);
+    }
+
+    if (UseAESCTRIntrinsics && !UseZbb) {
+      warning("Cannot enable UseAESCTRIntrinsics on cpu without UseZbb support.");
+      FLAG_SET_DEFAULT(UseAESCTRIntrinsics, false);
+    }
   } else {
     if (UseAES) {
       warning("AES instructions are not available on this CPU");
@@ -435,11 +444,26 @@ void VM_Version::c2_initialize() {
       warning("AES intrinsics are not available on this CPU");
       FLAG_SET_DEFAULT(UseAESIntrinsics, false);
     }
+    if (UseAESCTRIntrinsics) {
+      warning("Cannot enable UseAESCTRIntrinsics on cpu without UseZvkn support.");
+      FLAG_SET_DEFAULT(UseAESCTRIntrinsics, false);
+    }
   }
 
-  if (UseAESCTRIntrinsics) {
-    warning("AES/CTR intrinsics are not available on this CPU");
-    FLAG_SET_DEFAULT(UseAESCTRIntrinsics, false);
+  if (UseZvkg) {
+    if (FLAG_IS_DEFAULT(UseGHASHIntrinsics) && UseZvbb) {
+      FLAG_SET_DEFAULT(UseGHASHIntrinsics, true);
+    }
+
+    if (UseGHASHIntrinsics && !UseZvbb) {
+      warning("Cannot enable UseGHASHIntrinsics on cpu without UseZvbb support");
+      FLAG_SET_DEFAULT(UseGHASHIntrinsics, false);
+    }
+  } else {
+    if (UseGHASHIntrinsics) {
+      warning("Cannot enable UseGHASHIntrinsics on cpu without UseZvkg support");
+      FLAG_SET_DEFAULT(UseGHASHIntrinsics, false);
+    }
   }
 }
 

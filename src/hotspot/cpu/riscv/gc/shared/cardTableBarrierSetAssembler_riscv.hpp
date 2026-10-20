@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2026, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2020, 2022, Huawei Technologies Co., Ltd. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -31,7 +31,7 @@
 
 class CardTableBarrierSetAssembler: public ModRefBarrierSetAssembler {
 protected:
-  void store_check(MacroAssembler* masm, Register obj, Register tmp);
+  void store_check(MacroAssembler* masm, Register obj, Register tmp1, Register tmp2);
 
   virtual void gen_write_ref_array_post_barrier(MacroAssembler* masm, DecoratorSet decorators,
                                                 Register start, Register count, Register tmp, RegSet saved_regs);

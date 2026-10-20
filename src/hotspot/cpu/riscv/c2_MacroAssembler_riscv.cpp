@@ -402,8 +402,33 @@ void C2_MacroAssembler::fast_lock_lightweight(Register obj, Register box,
             /*acquire*/ Assembler::aq, /*release*/ Assembler::relaxed, /*result*/ tmp3_owner);
     beqz(tmp3_owner, monitor_locked);
 
-    // Check if recursive.
-    bne(tmp3_owner, tid, slow_path);
+    // Normally, a contended monitor enters the runtime slow path here.
+    // If `Zawrs` is enabled, wait briefly for the current owner to release
+    // the monitor and retry the fast-path acquisition once, which can
+    // potentially avoid a runtime call if the owner releases the monitor soon.
+    if (UseZawrs) {
+      Label recursive;
+      beq(tmp3_owner, tid, recursive);
+      // Defer non-thread owner markers to the runtime rather than waiting on them.
+      mv(t0, (uint64_t)ThreadIdentifier::initial());
+      bltu(tmp3_owner, t0, slow_path);
+
+      Label retry;
+      // Reload the owner to establish a reservation, so WRS.STO can
+      // observe an update to it.
+      lr_d(tmp3_owner, tmp2_owner_addr, Assembler::relaxed);
+      beqz(tmp3_owner, retry);
+      bltu(tmp3_owner, t0, slow_path);
+      wrs_sto();
+      bind(retry);
+      cmpxchg(/*addr*/ tmp2_owner_addr, /*expected*/ zr, /*new*/ tid, Assembler::int64,
+              /*acquire*/ Assembler::aq, /*release*/ Assembler::relaxed, /*result*/ tmp3_owner);
+      beqz(tmp3_owner, monitor_locked);
+      bne(tmp3_owner, tid, slow_path);
+      bind(recursive);
+    } else {
+      bne(tmp3_owner, tid, slow_path);
+    }
 
     // Recursive.
     increment(recursions_address, 1, tmp2, tmp3);
@@ -2303,6 +2328,83 @@ void C2_MacroAssembler::enc_cmove_cmp_fp(int cmpFlag, FloatRegister op1, FloatRe
       break;
     case BoolTest::gt:
       cmov_cmp_fp_gt(op1, op2, dst, src, is_single);
+      break;
+    default:
+      assert(false, "unsupported compare condition");
+      ShouldNotReachHere();
+  }
+}
+
+void C2_MacroAssembler::enc_cmove_fp_cmp(int cmpFlag, Register op1, Register op2,
+                        FloatRegister dst, FloatRegister src, bool is_single) {
+  bool is_unsigned = (cmpFlag & unsigned_branch_mask) == unsigned_branch_mask;
+  int op_select = cmpFlag & (~unsigned_branch_mask);
+
+  switch (op_select) {
+    case BoolTest::eq:
+      cmov_fp_eq(op1, op2, dst, src, is_single);
+      break;
+    case BoolTest::ne:
+      cmov_fp_ne(op1, op2, dst, src, is_single);
+      break;
+    case BoolTest::le:
+      if (is_unsigned) {
+        cmov_fp_leu(op1, op2, dst, src, is_single);
+      } else {
+        cmov_fp_le(op1, op2, dst, src, is_single);
+      }
+      break;
+    case BoolTest::ge:
+      if (is_unsigned) {
+        cmov_fp_geu(op1, op2, dst, src, is_single);
+      } else {
+        cmov_fp_ge(op1, op2, dst, src, is_single);
+      }
+      break;
+    case BoolTest::lt:
+      if (is_unsigned) {
+        cmov_fp_ltu(op1, op2, dst, src, is_single);
+      } else {
+        cmov_fp_lt(op1, op2, dst, src, is_single);
+      }
+      break;
+    case BoolTest::gt:
+      if (is_unsigned) {
+        cmov_fp_gtu(op1, op2, dst, src, is_single);
+      } else {
+        cmov_fp_gt(op1, op2, dst, src, is_single);
+      }
+      break;
+    default:
+      assert(false, "unsupported compare condition");
+      ShouldNotReachHere();
+  }
+}
+
+void C2_MacroAssembler::enc_cmove_fp_cmp_fp(int cmpFlag,
+                           FloatRegister op1, FloatRegister op2,
+                           FloatRegister dst, FloatRegister src,
+                           bool cmp_single, bool cmov_single) {
+  int op_select = cmpFlag & (~unsigned_branch_mask);
+
+  switch (op_select) {
+    case BoolTest::eq:
+      cmov_fp_cmp_fp_eq(op1, op2, dst, src, cmp_single, cmov_single);
+      break;
+    case BoolTest::ne:
+      cmov_fp_cmp_fp_ne(op1, op2, dst, src, cmp_single, cmov_single);
+      break;
+    case BoolTest::le:
+      cmov_fp_cmp_fp_le(op1, op2, dst, src, cmp_single, cmov_single);
+      break;
+    case BoolTest::ge:
+      cmov_fp_cmp_fp_ge(op1, op2, dst, src, cmp_single, cmov_single);
+      break;
+    case BoolTest::lt:
+      cmov_fp_cmp_fp_lt(op1, op2, dst, src, cmp_single, cmov_single);
+      break;
+    case BoolTest::gt:
+      cmov_fp_cmp_fp_gt(op1, op2, dst, src, cmp_single, cmov_single);
       break;
     default:
       assert(false, "unsupported compare condition");

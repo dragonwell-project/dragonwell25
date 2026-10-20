@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2006, 2026, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2021, Huawei Technologies Co., Ltd. All rights reserved.
  * Copyright (c) 2023, Rivos Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -306,10 +306,13 @@ void VM_Version::vendor_features() {
   }
   switch (mvendorid.value()) {
     case RIVOS:
-    rivos_features();
-    break;
+      rivos_features();
+      break;
+    case XUANTIE:
+      xuantie_features();
+      break;
     default:
-    break;
+      break;
   }
 }
 
@@ -343,5 +346,53 @@ void VM_Version::rivos_features() {
   if (mimpid.value() > 0x100) {
     ext_Zacas.enable_feature();
     ext_Zihintpause.enable_feature();
+  }
+}
+
+void VM_Version::xuantie_features() {
+  if (!marchid.enabled()) {
+    return;
+  }
+
+  const uint64_t architecture_id = static_cast<uint64_t>(marchid.value());
+  if (architecture_id != C925_MARCHID &&
+      architecture_id != C930_MARCHID &&
+      architecture_id != C950_MARCHID) {
+    return;
+  }
+
+  ext_v.enable_feature();
+  ext_Zabha.enable_feature();
+  ext_Zacas.enable_feature();
+  ext_Zawrs.enable_feature();
+  ext_Zba.enable_feature();
+  ext_Zbb.enable_feature();
+  ext_Zbc.enable_feature();
+  ext_Zbs.enable_feature();
+  ext_Zcb.enable_feature();
+  ext_Zfa.enable_feature();
+  ext_Zfh.enable_feature();
+  ext_Zfhmin.enable_feature();
+  ext_Zicbom.enable_feature();
+  ext_Zicbop.enable_feature();
+  ext_Zicboz.enable_feature();
+  ext_Ziccid.enable_feature();
+  ext_Zicond.enable_feature();
+  ext_Zicntr.enable_feature();
+  ext_Zicsr.enable_feature();
+  ext_Zic64b.enable_feature();
+  ext_Zifencei.enable_feature();
+  ext_Zihintpause.enable_feature();
+  ext_Zvbb.enable_feature();
+  ext_Zvbc.enable_feature();
+  ext_Zvfh.enable_feature();
+  ext_Zvkn.enable_feature();
+  ext_Zvkg.enable_feature();
+
+  unaligned_scalar.enable_feature(MISALIGNED_SCALAR_FAST);
+  unaligned_vector.enable_feature(MISALIGNED_VECTOR_FAST);
+
+  if (FLAG_IS_DEFAULT(CodeEntryAlignment)) {
+    FLAG_SET_DEFAULT(CodeEntryAlignment, 32);
   }
 }

@@ -995,6 +995,7 @@ protected:
 
   INSN(ecall,   0b1110011, 0b000, 0b000000000000);
   INSN(_ebreak, 0b1110011, 0b000, 0b000000000001);
+  INSN(wrs_sto, 0b1110011, 0b000, 0b000000011101);
 
 #undef INSN
 
@@ -2661,6 +2662,9 @@ enum Nf {
   INSN(vsha2ms_vv,  0b1110111, 0b010, 0b1, 0b101101);
   INSN(vsha2ch_vv,  0b1110111, 0b010, 0b1, 0b101110);
   INSN(vsha2cl_vv,  0b1110111, 0b010, 0b1, 0b101111);
+
+  // Vector GHASH (Zvkg) Extension
+  INSN(vghsh_vv,    0b1110111, 0b010, 0b1, 0b101100);
 
 #undef INSN
 

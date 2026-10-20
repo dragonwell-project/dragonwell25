@@ -107,12 +107,15 @@ define_pd_global(intx, InlineSmallCode,          1000);
   product(bool, UseZfh, false, DIAGNOSTIC, "Use Zfh instructions")               \
   product(bool, UseZfhmin, false, DIAGNOSTIC, "Use Zfhmin instructions")         \
   product(bool, UseZacas, false, EXPERIMENTAL, "Use Zacas instructions")         \
-  product(bool, UseZabha, false, EXPERIMENTAL, "Use UseZabha instructions")      \
+  product(bool, UseZabha, false, EXPERIMENTAL, "Use Zabha instructions")         \
+  product(bool, UseZawrs, false, EXPERIMENTAL, "Use Zawrs instructions")         \
   product(bool, UseZcb, false, DIAGNOSTIC, "Use Zcb instructions")               \
   product(bool, UseZic64b, false, EXPERIMENTAL, "Use Zic64b instructions")       \
   product(bool, UseZicbom, false, EXPERIMENTAL, "Use Zicbom instructions")       \
   product(bool, UseZicbop, false, EXPERIMENTAL, "Use Zicbop instructions")       \
   product(bool, UseZicboz, false, EXPERIMENTAL, "Use Zicboz instructions")       \
+  product(bool, UseZiccid, false, EXPERIMENTAL,                                  \
+          "Use Ziccid to omit icache flushes for atomic call patching")          \
   product(bool, UseZicond, false, DIAGNOSTIC, "Use Zicond instructions")         \
   product(bool, UseZihintpause, false, EXPERIMENTAL,                             \
           "Use Zihintpause instructions")                                        \
@@ -120,7 +123,9 @@ define_pd_global(intx, InlineSmallCode,          1000);
   product(bool, UseZvbb, false, DIAGNOSTIC, "Use Zvbb instructions")             \
   product(bool, UseZvbc, false, DIAGNOSTIC, "Use Zvbc instructions")             \
   product(bool, UseZvfh, false, DIAGNOSTIC, "Use Zvfh instructions")             \
-  product(bool, UseZvkn, false, EXPERIMENTAL,                                    \
+  product(bool, UseZvfhmin, false, DIAGNOSTIC, "Use Zvfhmin instructions")       \
+  product(bool, UseZvkg, false, DIAGNOSTIC, "Use Zvkg instructions")             \
+  product(bool, UseZvkn, false, DIAGNOSTIC,                                      \
           "Use Zvkn group extension, Zvkned, Zvknhb, Zvkb, Zvkt")                \
   product(bool, UseCtxFencei, false, EXPERIMENTAL,                               \
           "Use PR_RISCV_CTX_SW_FENCEI_ON to avoid explicit icache flush")
