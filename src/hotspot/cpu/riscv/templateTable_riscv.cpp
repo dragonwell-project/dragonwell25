@@ -2063,7 +2063,6 @@ void TemplateTable::fast_binaryswitch() {
   __ load_unsigned_byte(t0, Address(temp, 0));
 
   __ add(xbcp, xbcp, j);
-  __ la(xbcp, Address(xbcp, 0));
   __ dispatch_only(vtos, /*generate_poll*/true);
 
   // default case -> j = default offset
@@ -2076,7 +2075,6 @@ void TemplateTable::fast_binaryswitch() {
   __ load_unsigned_byte(t0, Address(temp, 0));
 
   __ add(xbcp, xbcp, j);
-  __ la(xbcp, Address(xbcp, 0));
   __ dispatch_only(vtos, /*generate_poll*/true);
 }
 
