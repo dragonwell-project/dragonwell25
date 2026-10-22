@@ -90,7 +90,7 @@ void C2_MacroAssembler::fast_lock(Register objectReg, Register boxReg,
     // equal exchange the stack address of our box with object markWord.
     // On failure disp_hdr contains the possibly locked markWord.
     cmpxchg(/*memory address*/oop, /*expected value*/tmp, /*new value*/box, Assembler::int64,
-            Assembler::aq, Assembler::rl, /*result*/disp_hdr);
+            memory_order_acq_rel, /*result*/disp_hdr);
     beq(disp_hdr, tmp, locked);
 
     assert(oopDesc::mark_offset_in_bytes() == 0, "offset of _mark is not 0");
@@ -120,7 +120,7 @@ void C2_MacroAssembler::fast_lock(Register objectReg, Register boxReg,
   Register tid = tmp4Reg;
   ld(tid, Address(xthread, JavaThread::monitor_owner_id_offset()));
   cmpxchg(/*memory address*/tmp, /*expected value*/zr, /*new value*/tid, Assembler::int64,
-          Assembler::aq, Assembler::rl, /*result*/tmp3Reg); // cas succeeds if tmp3Reg == zr(expected)
+          memory_order_acq_rel, /*result*/tmp3Reg); // cas succeeds if tmp3Reg == zr(expected)
 
   // Store a non-null value into the box to avoid looking like a re-entrant
   // lock. The fast-path monitor unlock code checks for
@@ -201,7 +201,7 @@ void C2_MacroAssembler::fast_unlock(Register objectReg, Register boxReg,
     // object.
 
     cmpxchg(/*memory address*/oop, /*expected value*/box, /*new value*/disp_hdr, Assembler::int64,
-            Assembler::relaxed, Assembler::rl, /*result*/tmp);
+            memory_order_release, /*result*/tmp);
     beq(box, tmp, unlocked); // box == tmp if cas succeeds
     j(slow_path);
   }
@@ -332,7 +332,7 @@ void C2_MacroAssembler::fast_lock_lightweight(Register obj, Register box,
     ori(tmp1_mark, tmp1_mark, markWord::unlocked_value);
     xori(tmp3_t, tmp1_mark, markWord::unlocked_value);
     cmpxchg(/*addr*/ obj, /*expected*/ tmp1_mark, /*new*/ tmp3_t, Assembler::int64,
-            /*acquire*/ Assembler::aq, /*release*/ Assembler::relaxed, /*result*/ tmp3_t);
+            memory_order_acquire, /*result*/ tmp3_t);
     bne(tmp1_mark, tmp3_t, slow_path);
 
     bind(push);
@@ -399,7 +399,7 @@ void C2_MacroAssembler::fast_lock_lightweight(Register obj, Register box,
     Register tid = tmp4;
     ld(tid, Address(xthread, JavaThread::monitor_owner_id_offset()));
     cmpxchg(/*addr*/ tmp2_owner_addr, /*expected*/ zr, /*new*/ tid, Assembler::int64,
-            /*acquire*/ Assembler::aq, /*release*/ Assembler::relaxed, /*result*/ tmp3_owner);
+            memory_order_acquire, /*result*/ tmp3_owner);
     beqz(tmp3_owner, monitor_locked);
 
     // Normally, a contended monitor enters the runtime slow path here.
@@ -422,7 +422,7 @@ void C2_MacroAssembler::fast_lock_lightweight(Register obj, Register box,
       wrs_sto();
       bind(retry);
       cmpxchg(/*addr*/ tmp2_owner_addr, /*expected*/ zr, /*new*/ tid, Assembler::int64,
-              /*acquire*/ Assembler::aq, /*release*/ Assembler::relaxed, /*result*/ tmp3_owner);
+              memory_order_acquire, /*result*/ tmp3_owner);
       beqz(tmp3_owner, monitor_locked);
       bne(tmp3_owner, tid, slow_path);
       bind(recursive);
@@ -516,7 +516,7 @@ void C2_MacroAssembler::fast_unlock_lightweight(Register obj, Register box,
     assert(oopDesc::mark_offset_in_bytes() == 0, "required to avoid lea");
     ori(tmp3_t, tmp1_mark, markWord::unlocked_value);
     cmpxchg(/*addr*/ obj, /*expected*/ tmp1_mark, /*new*/ tmp3_t, Assembler::int64,
-            /*acquire*/ Assembler::relaxed, /*release*/ Assembler::rl, /*result*/ tmp3_t);
+            memory_order_release, /*result*/ tmp3_t);
     beq(tmp1_mark, tmp3_t, unlocked);
 
     bind(push_and_slow_path);
