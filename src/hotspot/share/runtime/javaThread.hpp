@@ -736,9 +736,6 @@ private:
   bool java_resume(bool register_vthread_SR);
   bool is_suspended()     { return _handshake.is_suspended(); }
 
-  // Check for async exception in addition to safepoint.
-  static void check_special_condition_for_native_trans(JavaThread *thread);
-
   // Synchronize with another thread that is deoptimizing objects of the
   // current thread, i.e. reverts optimizations based on escape analysis.
   void wait_for_object_deoptimization();
