@@ -7205,6 +7205,36 @@ static const int64_t right_3_bits = right_n_bits(3);
     __ kernel_crc32(crc, buf, len,
                     c_rarg3, c_rarg4, c_rarg5, c_rarg6, // tmp's for tables
                     c_rarg7, t2, t3, t4, t5, t6);       // misc tmps
+    __ sext(crc, crc, 32);
+
+    __ leave(); // required for proper stackwalking of RuntimeStub frame
+    __ ret();
+
+    return start;
+  }
+
+  address generate_updateBytesCRC32C() {
+    assert(UseCRC32CIntrinsics, "what are we doing here?");
+
+    __ align(CodeEntryAlignment);
+    StubGenStubId stub_id = StubGenStubId::updateBytesCRC32C_id;
+    StubCodeMark mark(this, stub_id);
+
+    address start = __ pc();
+
+    const Register crc    = c_rarg0;  // crc
+    const Register buf    = c_rarg1;  // source java byte array address
+    const Register len    = c_rarg2;  // length
+
+    BLOCK_COMMENT("Entry:");
+    __ enter(); // required for proper stackwalking of RuntimeStub frame
+
+    // c_rarg3/c_rarg4 are reused as the two table base pointers; the rest are scratch.
+    __ kernel_crc32c(crc, buf, len,
+                     c_rarg3, c_rarg4,           // byte_table, clmul_table
+                     c_rarg5, c_rarg6, c_rarg7,  // accum_hi, k1, k2
+                     t2, t3, t4);                // scratch1, scratch2, fold_end
+    __ sext(crc, crc, 32);
 
     __ leave(); // required for proper stackwalking of RuntimeStub frame
     __ ret();
@@ -7279,6 +7309,12 @@ static const int64_t right_3_bits = right_n_bits(3);
       // set table address before stub generation which use it
       StubRoutines::_crc_table_adr = (address)StubRoutines::riscv::_crc_table;
       StubRoutines::_updateBytesCRC32 = generate_updateBytesCRC32();
+    }
+
+    if (UseCRC32CIntrinsics) {
+      // set table address before stub generation which use it
+      StubRoutines::_crc32c_table_addr = (address)StubRoutines::riscv::_crc32c_table;
+      StubRoutines::_updateBytesCRC32C = generate_updateBytesCRC32C();
     }
 
     if (vmIntrinsics::is_intrinsic_available(vmIntrinsics::_float16ToFloat) &&
