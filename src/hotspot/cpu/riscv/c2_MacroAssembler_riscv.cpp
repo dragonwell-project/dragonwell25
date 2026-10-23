@@ -1013,7 +1013,7 @@ void C2_MacroAssembler::string_indexof(Register haystack, Register needle,
   Register orig_haystack = tmp5;
   mv(orig_haystack, haystack);
   // result_tmp = tmp4
-  shadd(haystack_end, result_tmp, haystack, haystack_end, haystack_chr_shift);
+  shift_left_add(haystack_end, result_tmp, haystack, haystack_chr_shift);
   subi(ch2, needle_len, 1); // bc offset init value, ch2 is t1
   mv(tmp3, needle);
 
@@ -1043,7 +1043,7 @@ void C2_MacroAssembler::string_indexof(Register haystack, Register needle,
   bgtz(ch2, BCLOOP);
 
   // tmp6: pattern end, address after needle
-  shadd(tmp6, needle_len, needle, tmp6, needle_chr_shift);
+  shift_left_add(tmp6, needle_len, needle, needle_chr_shift);
   if (needle_isL == haystack_isL) {
     // load last 8 bytes (8LL/4UU symbols)
     ld(tmp6, Address(tmp6, -wordSize));
@@ -1074,7 +1074,7 @@ void C2_MacroAssembler::string_indexof(Register haystack, Register needle,
   //   move j with bad char offset table
   bind(BMLOOPSTR2);
   // compare pattern to source string backward
-  shadd(result, nlen_tmp, haystack, result, haystack_chr_shift);
+  shift_left_add(result, nlen_tmp, haystack, haystack_chr_shift);
   (this->*haystack_load_1chr)(skipch, Address(result), noreg);
   subi(nlen_tmp, nlen_tmp, firstStep); // nlen_tmp is positive here, because needle_len >= 8
   if (needle_isL == haystack_isL) {
@@ -1100,9 +1100,9 @@ void C2_MacroAssembler::string_indexof(Register haystack, Register needle,
   }
 
   bind(BMLOOPSTR1);
-  shadd(ch1, nlen_tmp, needle, ch1, needle_chr_shift);
+  shift_left_add(ch1, nlen_tmp, needle, needle_chr_shift);
   (this->*needle_load_1chr)(ch1, Address(ch1), noreg);
-  shadd(ch2, nlen_tmp, haystack, ch2, haystack_chr_shift);
+  shift_left_add(ch2, nlen_tmp, haystack, haystack_chr_shift);
   (this->*haystack_load_1chr)(ch2, Address(ch2), noreg);
 
   bind(BMLOOPSTR1_AFTER_LOAD);
@@ -1130,7 +1130,7 @@ void C2_MacroAssembler::string_indexof(Register haystack, Register needle,
   bind(BMADV);
   subi(nlen_tmp, needle_len, 1);
   // move haystack after bad char skip offset
-  shadd(haystack, result_tmp, haystack, result, haystack_chr_shift);
+  shift_left_add(haystack, result_tmp, haystack, haystack_chr_shift, result);
   ble(haystack, haystack_end, BMLOOPSTR2);
   addi(sp, sp, ASIZE);
   j(NOMATCH);
@@ -1989,7 +1989,7 @@ void C2_MacroAssembler::arrays_hashcode(Register ary, Register cnt, Register res
   mv(pow31_3,  29791);           // [31^^3]
   mv(pow31_2,    961);           // [31^^2]
 
-  shadd(chunks_end, chunks, ary, t0, chunks_end_shift);
+  shift_left_add(chunks_end, chunks, ary, chunks_end_shift);
   andi(cnt, cnt, stride - 1);    // don't forget about tail!
 
   bind(WIDE_LOOP);
@@ -2012,7 +2012,7 @@ void C2_MacroAssembler::arrays_hashcode(Register ary, Register cnt, Register res
   beqz(cnt, DONE);
 
   bind(TAIL);
-  shadd(chunks_end, cnt, ary, t0, chunks_end_shift);
+  shift_left_add(chunks_end, cnt, ary, chunks_end_shift);
 
   bind(TAIL_LOOP);
   arrays_hashcode_elload(t0, Address(ary), eltype);
@@ -2084,7 +2084,7 @@ void C2_MacroAssembler::arrays_hashcode_v(Register ary, Register cnt, Register r
   vmul_vv(v_src, v_src, v_coeffs);
   vmadd_vx(v_sum, pow31_highest, v_src);
   mulw(result, result, pow31_highest);
-  shadd(ary, consumed, ary, t0, elsize_shift);
+  shift_left_add(ary, consumed, ary, elsize_shift, t0);
   subw(cnt, cnt, consumed);
   andi(t1, cnt, ~(stride - 1));
   bnez(t1, VEC_LOOP);
@@ -2096,7 +2096,7 @@ void C2_MacroAssembler::arrays_hashcode_v(Register ary, Register cnt, Register r
   beqz(cnt, DONE);
 
   bind(SCALAR_TAIL);
-  shadd(ary_end, cnt, ary, t0, elsize_shift);
+  shift_left_add(ary_end, cnt, ary, elsize_shift);
 
   bind(SCALAR_TAIL_LOOP);
   arrays_hashcode_elload(t0, Address(ary), eltype);
@@ -2935,7 +2935,7 @@ void C2_MacroAssembler::clear_array_v(Register base, Register cnt) {
   vsetvli(t0, cnt, Assembler::e64, Assembler::m4);
   vse64_v(v4, base);
   sub(cnt, cnt, t0);
-  shadd(base, t0, base, t0, 3);
+  shift_left_add(base, t0, base, 3, t0);
   bnez(cnt, loop);
 }
 
@@ -3037,7 +3037,7 @@ void C2_MacroAssembler::string_compare_v(Register str1, Register str2, Register 
     bgez(tmp2, DIFFERENCE);
     sub(cnt2, cnt2, tmp1);
     add(strL, strL, tmp1);
-    shadd(strU, tmp1, strU, tmp1, 1);
+    shift_left_add(strU, tmp1, strU, 1, tmp1);
     bnez(cnt2, loop);
     j(DONE);
   }
@@ -3068,7 +3068,7 @@ void C2_MacroAssembler::byte_array_inflate_v(Register src, Register dst, Registe
   vse16_v(v4, dst);
   sub(len, len, tmp);
   add(src, src, tmp);
-  shadd(dst, tmp, dst, tmp, 1);
+  shift_left_add(dst, tmp, dst, 1, tmp);
   bnez(len, loop);
   BLOCK_COMMENT("} byte_array_inflate_v");
 }
@@ -3119,7 +3119,7 @@ void C2_MacroAssembler::encode_iso_array_v(Register src, Register dst, Register 
   add(result, result, t0);
   add(dst, dst, t0);
   sub(len, len, t0);
-  shadd(src, t0, src, t0, 1);
+  shift_left_add(src, t0, src, 1, t0);
   bnez(len, loop);
   j(done);
 
