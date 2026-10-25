@@ -4537,11 +4537,13 @@ void MacroAssembler::cmpxchg_narrow_value(Register addr, Register expected,
   if (UseZacas) {
     // This word load pre-checks the target byte/short. A mismatch branches
     // directly to fail, so the acquiring amocas below is never executed.
-    // When Zalasr has elided a preceding volatile store's trailing StoreLoad
-    // fence, make the pre-check acquiring so s*.rl -> lw.aq still provides
-    // the required RCsc ordering on this failure path.
-    if (UseZalasr && (acquire == Assembler::aq)) {
-      lw_aq(result, aligned_addr);
+    // Make the pre-check acquiring on the volatile path, as for a volatile
+    // load: lw.aq with Zalasr, plain lw + fence r,rw otherwise. The Zalasr
+    // form additionally pairs with a preceding volatile store whose trailing
+    // StoreLoad fence was elided, so s*.rl -> lw.aq still provides the
+    // required RCsc ordering on this failure path.
+    if (acquire == Assembler::aq) {
+      lw_acquire(result, aligned_addr);
     } else {
       lw(result, aligned_addr);
     }
@@ -4621,11 +4623,13 @@ void MacroAssembler::weak_cmpxchg_narrow_value(Register addr, Register expected,
   if (UseZacas) {
     // This word load pre-checks the target byte/short. A mismatch branches
     // directly to fail, so the acquiring amocas below is never executed.
-    // When Zalasr has elided a preceding volatile store's trailing StoreLoad
-    // fence, make the pre-check acquiring so s*.rl -> lw.aq still provides
-    // the required RCsc ordering on this failure path.
-    if (UseZalasr && (acquire == Assembler::aq)) {
-      lw_aq(result, aligned_addr);
+    // Make the pre-check acquiring on the volatile path, as for a volatile
+    // load: lw.aq with Zalasr, plain lw + fence r,rw otherwise. The Zalasr
+    // form additionally pairs with a preceding volatile store whose trailing
+    // StoreLoad fence was elided, so s*.rl -> lw.aq still provides the
+    // required RCsc ordering on this failure path.
+    if (acquire == Assembler::aq) {
+      lw_acquire(result, aligned_addr);
     } else {
       lw(result, aligned_addr);
     }
