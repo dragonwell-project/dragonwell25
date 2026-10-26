@@ -6692,6 +6692,66 @@ void MacroAssembler::float_to_float16_NaN(Register dst, FloatRegister src,
   orr(dst, tmp2, tmp1);
 }
 
+// j.l.Float.float16ToFloat
+void MacroAssembler::flt16_to_flt(FloatRegister dst, Register src) {
+  assert_different_registers(src, t0, t1);
+  Label L_NaN_Inf, L_done;
+
+  // On riscv, NaN needs a special process as fcvt does not work in that case.
+  // On riscv, Inf does not need a special process as fcvt can handle it correctly.
+  // but we consider to get the slow path to process NaN and Inf at the same time,
+  // as both of them are rare cases, and if we try to get the slow path to handle
+  // only NaN case it would sacrifise the performance for normal cases,
+  // i.e. non-NaN and non-Inf cases.
+
+  // check whether it's a NaN or +/- Inf.
+  mv(t0, 0x7c00);
+  andr(t1, src, t0);
+  beq(t0, t1, L_NaN_Inf);
+
+  // non-NaN or non-Inf cases, just use built-in instructions.
+  fmv_h_x(dst, src);
+  fcvt_s_h(dst, dst);
+  j(L_done);
+
+  bind(L_NaN_Inf);
+  // construct a NaN in 32 bits from the NaN in 16 bits,
+  // we need the payloads of non-canonical NaNs to be preserved.
+  mv(t1, 0x7f800000);
+  // The upper 16 bits of a short argument are unspecified. Sign-extend the
+  // low 16 bits before shifting so that the float sign bit comes from the
+  // float16 sign bit.
+  sext(t0, src, 16);
+  slli(t0, t0, 13);
+  orr(t1, t0, t1);
+  fmv_w_x(dst, t1);
+
+  bind(L_done);
+}
+
+// j.l.Float.floatToFloat16
+void MacroAssembler::flt_to_flt16(Register dst, FloatRegister src, FloatRegister ftmp) {
+  assert_different_registers(dst, t0, t1);
+  Label L_NaN, L_done;
+
+  // On riscv, NaN needs a special process as fcvt does not work in that case.
+
+  // check whether it's a NaN.
+  // replace fclass with feq as performance optimization.
+  feq_s(t0, src, src);
+  beqz(t0, L_NaN);
+
+  // non-NaN cases, just use built-in instructions.
+  fcvt_h_s(ftmp, src);
+  fmv_x_h(dst, ftmp);
+  j(L_done);
+
+  bind(L_NaN);
+  float_to_float16_NaN(dst, src, t0, t1);
+
+  bind(L_done);
+}
+
 #define FCVT_SAFE(FLOATCVT, FLOATSIG)                                                     \
 void MacroAssembler::FLOATCVT##_safe(Register dst, FloatRegister src, Register tmp) {     \
   Label done;                                                                             \
@@ -6926,34 +6986,20 @@ void MacroAssembler::cmp_x2i(Register dst, Register src1, Register src2,
     mv(dst, zr);
     return;
   }
-  Label done;
-  Register left = src1;
-  Register right = src2;
-  if (dst == src1) {
-    assert_different_registers(dst, src2, tmp);
-    mv(tmp, src1);
-    left = tmp;
-  } else if (dst == src2) {
-    assert_different_registers(dst, src1, tmp);
-    mv(tmp, src2);
-    right = tmp;
-  }
 
-  // installs 1 if gt else 0
+  // dst = (src1 > src2) - (src1 < src2)
+  assert_different_registers(tmp, dst);
+  assert_different_registers(tmp, src1);
+  assert_different_registers(tmp, src2);
+
   if (is_signed) {
-    slt(dst, right, left);
+    slt(tmp, src2, src1);
+    slt(dst, src1, src2);
   } else {
-    sltu(dst, right, left);
+    sltu(tmp, src2, src1);
+    sltu(dst, src1, src2);
   }
-  bnez(dst, done);
-  if (is_signed) {
-    slt(dst, left, right);
-  } else {
-    sltu(dst, left, right);
-  }
-  // dst = -1 if lt; else if eq , dst = 0
-  neg(dst, dst);
-  bind(done);
+  sub(dst, tmp, dst);
 }
 
 void MacroAssembler::cmp_l2i(Register dst, Register src1, Register src2, Register tmp)
