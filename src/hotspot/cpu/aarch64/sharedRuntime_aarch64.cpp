@@ -1856,16 +1856,10 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
 
   Label safepoint_in_progress, safepoint_in_progress_done;
 
-  // Switch thread to "native transition" state before reading the synchronization state.
-  // This additional state is necessary because reading and testing the synchronization
-  // state is not atomic w.r.t. GC, as this scenario demonstrates:
-  //     Java thread A, in _thread_in_native state, loads _not_synchronized and is preempted.
-  //     VM thread changes sync state to synchronizing and suspends threads for GC.
-  //     Thread A is resumed to finish this native method, but doesn't block here since it
-  //     didn't see any synchronization is progress, and escapes.
-  __ mov(rscratch1, _thread_in_native_trans);
-
-  __ strw(rscratch1, Address(rthread, JavaThread::thread_state_offset()));
+  // change thread state
+  __ mov(rscratch1, _thread_in_Java);
+  __ lea(rscratch2, Address(rthread, JavaThread::thread_state_offset()));
+  __ stlrw(rscratch1, rscratch2);
 
   // Force this write out before the read below
   if (!UseSystemMemoryBarrier) {
@@ -1882,11 +1876,6 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
     __ cbnzw(rscratch1, safepoint_in_progress);
     __ bind(safepoint_in_progress_done);
   }
-
-  // change thread state
-  __ mov(rscratch1, _thread_in_Java);
-  __ lea(rscratch2, Address(rthread, JavaThread::thread_state_offset()));
-  __ stlrw(rscratch1, rscratch2);
 
   if (LockingMode != LM_LEGACY && method->is_object_wait0()) {
     // Check preemption for Object.wait()
@@ -2119,7 +2108,7 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
 #ifndef PRODUCT
   assert(frame::arg_reg_save_area_bytes == 0, "not expecting frame reg save area");
 #endif
-    __ lea(rscratch1, RuntimeAddress(CAST_FROM_FN_PTR(address, JavaThread::check_special_condition_for_native_trans)));
+    __ lea(rscratch1, RuntimeAddress(CAST_FROM_FN_PTR(address, SharedRuntime::check_special_condition_for_native_trans)));
     __ blr(rscratch1);
 
     // Restore any method result value

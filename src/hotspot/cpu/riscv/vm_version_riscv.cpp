@@ -33,17 +33,48 @@
 
 #include <ctype.h>
 
+// The Zalasr (Table A.7 / RCsc) sequences emitted by the JIT for volatile
+// accesses only interoperate with C++ code compiled using the psABI atomics
+// mapping (A6S: seq_cst stores carry a trailing full fence), i.e.
+// gcc >= 13.3 or clang >= 19. libjvm itself and the bundled JDK native
+// libraries are the closest such C++ code, so gate UseZalasr on the
+// toolchain that built this VM. See riscv-elf-psabi-doc,
+// "RISC-V Atomics Mappings" (note 3: do not combine with older mappings).
+static constexpr bool toolchain_uses_psabi_atomics() {
+#if defined(__clang_major__)
+  return __clang_major__ >= 19;
+#elif defined(__GNUC__)
+  return (__GNUC__ > 13) || (__GNUC__ == 13 && __GNUC_MINOR__ >= 3);
+#else
+  return false;
+#endif
+}
+
 uint32_t VM_Version::_initial_vector_length = 0;
+bool VM_Version::_use_zalasr_atomics = false;
 
-#define DEF_RV_FEATURE(NAME, PRETTY, BIT, FSTRING, FLAGF)       \
-VM_Version::NAME##RVFeatureValue VM_Version::NAME(PRETTY, BIT, FSTRING);
-RV_FEATURE_FLAGS(DEF_RV_FEATURE)
+#define DEF_RV_EXT_FEATURE(PRETTY, LINUX_BIT, FSTRING, FLAGF) \
+VM_Version::ext_##PRETTY##RVExtFeatureValue VM_Version::ext_##PRETTY;
+RV_EXT_FEATURE_FLAGS(DEF_RV_EXT_FEATURE)
+#undef DEF_RV_EXT_FEATURE
 
-#define ADD_RV_FEATURE_IN_LIST(NAME, PRETTY, BIT, FSTRING, FLAGF) \
-    &VM_Version::NAME,
-VM_Version::RVFeatureValue* VM_Version::_feature_list[] = {
-RV_FEATURE_FLAGS(ADD_RV_FEATURE_IN_LIST)
+#define DEF_RV_NON_EXT_FEATURE(PRETTY, LINUX_BIT, FSTRING, FLAGF) \
+VM_Version::PRETTY##RVNonExtFeatureValue VM_Version::PRETTY;
+RV_NON_EXT_FEATURE_FLAGS(DEF_RV_NON_EXT_FEATURE)
+#undef DEF_RV_NON_EXT_FEATURE
+
+#define ADD_RV_EXT_FEATURE_IN_LIST(PRETTY, LINUX_BIT, FSTRING, FLAGF) \
+     &VM_Version::ext_##PRETTY,
+#define ADD_RV_NON_EXT_FEATURE_IN_LIST(PRETTY, LINUX_BIT, FSTRING, FLAGF) \
+     &VM_Version::PRETTY,
+ VM_Version::RVFeatureValue* VM_Version::_feature_list[] = {
+ RV_EXT_FEATURE_FLAGS(ADD_RV_EXT_FEATURE_IN_LIST)
+ RV_NON_EXT_FEATURE_FLAGS(ADD_RV_NON_EXT_FEATURE_IN_LIST)
   nullptr};
+#undef ADD_RV_NON_EXT_FEATURE_IN_LIST
+#undef ADD_RV_EXT_FEATURE_IN_LIST
+
+VM_Version::RVExtFeatures* VM_Version::_rv_ext_features = new VM_Version::RVExtFeatures();
 
 void VM_Version::useRVA20U64Profile() {
   RV_USE_RVA20U64;
@@ -72,14 +103,6 @@ void VM_Version::common_initialize() {
 
   setup_cpu_available_features();
 
-  // check if satp.mode is supported, currently supports up to SV48(RV64)
-  if (satp_mode.value() > VM_SV48 || satp_mode.value() < VM_MBARE) {
-    vm_exit_during_initialization(
-      err_msg(
-         "Unsupported satp mode: SV%d. Only satp modes up to sv48 are supported for now.",
-         (int)satp_mode.value()));
-  }
-
   if (UseRVA20U64) {
     useRVA20U64Profile();
   }
@@ -88,17 +111,6 @@ void VM_Version::common_initialize() {
   }
   if (UseRVA23U64) {
     useRVA23U64Profile();
-  }
-
-  // Enable vendor specific features
-
-  if (mvendorid.enabled()) {
-    // Rivos
-    if (mvendorid.value() == RIVOS) {
-      if (FLAG_IS_DEFAULT(UseConservativeFence)) {
-        FLAG_SET_DEFAULT(UseConservativeFence, false);
-      }
-    }
   }
 
   if (UseZic64b) {
@@ -135,7 +147,7 @@ void VM_Version::common_initialize() {
     FLAG_SET_DEFAULT(UseSignumIntrinsic, true);
   }
 
-  if (UseRVC && !ext_C.enabled()) {
+  if (UseRVC && !ext_c.enabled()) {
     warning("RVC is not supported on this CPU");
     FLAG_SET_DEFAULT(UseRVC, false);
 
@@ -143,6 +155,20 @@ void VM_Version::common_initialize() {
       warning("UseRVA20U64 is not supported on this CPU");
       FLAG_SET_DEFAULT(UseRVA20U64, false);
     }
+  }
+
+  if (UseZalasr && !toolchain_uses_psabi_atomics()) {
+    // A JVM built by a pre-psABI toolchain contains C++ atomics whose mapping
+    // is incompatible with the Zalasr sequences the JIT would emit; mixing them
+    // can break Java volatile semantics. Only warn when Zalasr was asked for
+    // explicitly: where the extension is detected it is enabled by default, and
+    // a plain start-up should stay quiet.
+    if (!FLAG_IS_DEFAULT(UseZalasr)) {
+      warning("UseZalasr requires a JVM built with a toolchain using the "
+              "psABI atomics mapping (gcc >= 13.3 or clang >= 19); "
+              "disabling Zalasr");
+    }
+    FLAG_SET_DEFAULT(UseZalasr, false);
   }
 
   if (FLAG_IS_DEFAULT(AvoidUnalignedAccesses)) {
@@ -173,6 +199,22 @@ void VM_Version::common_initialize() {
   }
 #endif
 
+  // Zalasr and Ztso are mutually exclusive. Under Ztso the acquire and release fences
+  // are elided anyway, see MacroAssembler::membar(), so all Zalasr would still buy is
+  // eliding the trailing StoreLoad fence of a volatile store, which is a separate
+  // optimization. Ztso takes precedence for now, so Zalasr is turned off.
+  if (UseZtso && UseZalasr) {
+    if (!FLAG_IS_DEFAULT(UseZalasr)) {
+      warning("UseZalasr is not supported together with UseZtso, disabling Zalasr.");
+    }
+    FLAG_SET_DEFAULT(UseZalasr, false);
+  }
+
+  // Latch the native AtomicAccess dispatch flag only after every UseZalasr
+  // adjustment above has settled. See the comment on _use_zalasr_atomics in
+  // vm_version_riscv.hpp.
+  _use_zalasr_atomics = UseZalasr;
+
   if (UseZbb) {
     if (FLAG_IS_DEFAULT(UsePopCountInstruction)) {
       FLAG_SET_DEFAULT(UsePopCountInstruction, true);
@@ -181,7 +223,7 @@ void VM_Version::common_initialize() {
     FLAG_SET_DEFAULT(UsePopCountInstruction, false);
   }
 
-  if (UseZicboz && zicboz_block_size.enabled() && zicboz_block_size.value() > 0) {
+  if (UseZicboz && zicboz_block_size.value() > 0) {
     assert(is_power_of_2(zicboz_block_size.value()), "Sanity");
     if (FLAG_IS_DEFAULT(UseBlockZeroing)) {
       FLAG_SET_DEFAULT(UseBlockZeroing, true);
@@ -207,43 +249,19 @@ void VM_Version::common_initialize() {
     }
   } else {
     if (!FLAG_IS_DEFAULT(UseCRC32Intrinsics)) {
-      warning("CRC32 intrinsic are not available on this CPU.");
+      warning("CRC32 intrinsic is not available on this CPU.");
     }
     FLAG_SET_DEFAULT(UseCRC32Intrinsics, false);
   }
 
-  if (UseCRC32CIntrinsics) {
-    warning("CRC32C intrinsics are not available on this CPU.");
-    FLAG_SET_DEFAULT(UseCRC32CIntrinsics, false);
-  }
-
-  // UseZvbb (depends on RVV).
-  if (UseZvbb && !UseRVV) {
-    warning("Cannot enable UseZvbb on cpu without RVV support.");
-    FLAG_SET_DEFAULT(UseZvbb, false);
-  }
-
-  // UseZvbc (depends on RVV).
-  if (UseZvbc && !UseRVV) {
-    warning("Cannot enable UseZvbc on cpu without RVV support.");
-    FLAG_SET_DEFAULT(UseZvbc, false);
-  }
-
-  // UseZvkn (depends on RVV).
-  if (UseZvkn && !UseRVV) {
-    warning("Cannot enable UseZvkn on cpu without RVV support.");
-    FLAG_SET_DEFAULT(UseZvkn, false);
-  }
-
-  // UseZvfh (depends on RVV)
-  if (UseZvfh) {
-    if (!UseRVV) {
-      warning("Cannot enable UseZvfh on cpu without RVV support.");
-      FLAG_SET_DEFAULT(UseZvfh, false);
+  if (UseZbc) {
+    if (FLAG_IS_DEFAULT(UseCRC32CIntrinsics)) {
+      FLAG_SET_DEFAULT(UseCRC32CIntrinsics, true);
     }
-    if (!UseZfh) {
-      warning("Cannot enable UseZvfh on cpu without Zfh support.");
-      FLAG_SET_DEFAULT(UseZvfh, false);
+  } else {
+    if (UseCRC32CIntrinsics) {
+      warning("CRC32C intrinsic is not available on this CPU.");
+      FLAG_SET_DEFAULT(UseCRC32CIntrinsics, false);
     }
   }
 }
@@ -462,6 +480,15 @@ void VM_Version::c2_initialize() {
       warning("UseAESIntrinsics enabled, but UseAES not, enabling");
       UseAES = true;
     }
+
+    if (FLAG_IS_DEFAULT(UseAESCTRIntrinsics) && UseZbb) {
+      FLAG_SET_DEFAULT(UseAESCTRIntrinsics, true);
+    }
+
+    if (UseAESCTRIntrinsics && !UseZbb) {
+      warning("Cannot enable UseAESCTRIntrinsics on cpu without UseZbb support.");
+      FLAG_SET_DEFAULT(UseAESCTRIntrinsics, false);
+    }
   } else {
     if (UseAES) {
       warning("AES instructions are not available on this CPU");
@@ -471,11 +498,26 @@ void VM_Version::c2_initialize() {
       warning("AES intrinsics are not available on this CPU");
       FLAG_SET_DEFAULT(UseAESIntrinsics, false);
     }
+    if (UseAESCTRIntrinsics) {
+      warning("Cannot enable UseAESCTRIntrinsics on cpu without UseZvkn support.");
+      FLAG_SET_DEFAULT(UseAESCTRIntrinsics, false);
+    }
   }
 
-  if (UseAESCTRIntrinsics) {
-    warning("AES/CTR intrinsics are not available on this CPU");
-    FLAG_SET_DEFAULT(UseAESCTRIntrinsics, false);
+  if (UseZvkg) {
+    if (FLAG_IS_DEFAULT(UseGHASHIntrinsics) && UseZvbb) {
+      FLAG_SET_DEFAULT(UseGHASHIntrinsics, true);
+    }
+
+    if (UseGHASHIntrinsics && !UseZvbb) {
+      warning("Cannot enable UseGHASHIntrinsics on cpu without UseZvbb support");
+      FLAG_SET_DEFAULT(UseGHASHIntrinsics, false);
+    }
+  } else {
+    if (UseGHASHIntrinsics) {
+      warning("Cannot enable UseGHASHIntrinsics on cpu without UseZvkg support");
+      FLAG_SET_DEFAULT(UseGHASHIntrinsics, false);
+    }
   }
 }
 

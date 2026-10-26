@@ -1760,10 +1760,9 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
   __ la(c_rarg0, Address(xthread, in_bytes(JavaThread::jni_environment_offset())));
 
   // Now set thread in native
-  __ la(t1, Address(xthread, JavaThread::thread_state_offset()));
-  __ mv(t0, _thread_in_native);
-  __ membar(MacroAssembler::LoadStore | MacroAssembler::StoreStore);
-  __ sw(t0, Address(t1));
+  __ mv(t1, _thread_in_native);
+  __ la(t0, Address(xthread, JavaThread::thread_state_offset()));
+  __ sw_release(t1, t0);
 
   // Clobbers t1
   __ rt_call(native_func);
@@ -1778,16 +1777,10 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
 
   Label safepoint_in_progress, safepoint_in_progress_done;
 
-  // Switch thread to "native transition" state before reading the synchronization state.
-  // This additional state is necessary because reading and testing the synchronization
-  // state is not atomic w.r.t. GC, as this scenario demonstrates:
-  //     Java thread A, in _thread_in_native state, loads _not_synchronized and is preempted.
-  //     VM thread changes sync state to synchronizing and suspends threads for GC.
-  //     Thread A is resumed to finish this native method, but doesn't block here since it
-  //     didn't see any synchronization is progress, and escapes.
-  __ mv(t0, _thread_in_native_trans);
-
-  __ sw(t0, Address(xthread, JavaThread::thread_state_offset()));
+  // change thread state
+  __ mv(t1, _thread_in_Java);
+  __ la(t0, Address(xthread, JavaThread::thread_state_offset()));
+  __ sw_release(t1, t0);
 
   // Force this write out before the read below
   if (!UseSystemMemoryBarrier) {
@@ -1801,12 +1794,6 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
     __ bnez(t0, safepoint_in_progress);
     __ bind(safepoint_in_progress_done);
   }
-
-  // change thread state
-  __ la(t1, Address(xthread, JavaThread::thread_state_offset()));
-  __ mv(t0, _thread_in_Java);
-  __ membar(MacroAssembler::LoadStore | MacroAssembler::StoreStore);
-  __ sw(t0, Address(t1));
 
   if (LockingMode != LM_LEGACY && method->is_object_wait0()) {
     // Check preemption for Object.wait()
@@ -2038,7 +2025,7 @@ nmethod* SharedRuntime::generate_native_wrapper(MacroAssembler* masm,
 #ifndef PRODUCT
     assert(frame::arg_reg_save_area_bytes == 0, "not expecting frame reg save area");
 #endif
-    __ rt_call(CAST_FROM_FN_PTR(address, JavaThread::check_special_condition_for_native_trans));
+    __ rt_call(CAST_FROM_FN_PTR(address, SharedRuntime::check_special_condition_for_native_trans));
 
     // Restore any method result value
     restore_native_result(masm, ret_type, stack_slots);
@@ -2486,7 +2473,7 @@ void SharedRuntime::generate_deopt_blob() {
 // EPILOG must remove this many slots.
 // RISCV needs two words for RA (return address) and FP (frame pointer).
 uint SharedRuntime::in_preserve_stack_slots() {
-  return 2 * VMRegImpl::slots_per_word + (VerifyStackAtCalls ? 0 : 2) ;
+  return 2 * VMRegImpl::slots_per_word + (VerifyStackAtCalls ? 2 : 0);
 }
 
 uint SharedRuntime::out_preserve_stack_slots() {

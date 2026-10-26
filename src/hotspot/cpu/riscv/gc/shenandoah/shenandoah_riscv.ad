@@ -42,8 +42,7 @@ instruct compareAndSwapP_shenandoah(iRegINoSp res, indirect mem, iRegP oldval, i
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::relaxed /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_release, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -63,8 +62,7 @@ instruct compareAndSwapN_shenandoah(iRegINoSp res, indirect mem, iRegN oldval, i
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::relaxed /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_release, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -85,8 +83,7 @@ instruct compareAndSwapPAcq_shenandoah(iRegINoSp res, indirect mem, iRegP oldval
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::aq /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_seq_cst, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -107,8 +104,7 @@ instruct compareAndSwapNAcq_shenandoah(iRegINoSp res, indirect mem, iRegN oldval
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::aq /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_seq_cst, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -127,8 +123,7 @@ instruct compareAndExchangeN_shenandoah(iRegNNoSp res, indirect mem, iRegN oldva
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::relaxed /* acquire */, Assembler::rl /* release */,
-                                                   true /* is_cae */, $res$$Register);
+                                                   memory_order_release, true /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -147,8 +142,7 @@ instruct compareAndExchangeP_shenandoah(iRegPNoSp res, indirect mem, iRegP oldva
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::relaxed /* acquire */, Assembler::rl /* release */,
-                                                   true /* is_cae */, $res$$Register);
+                                                   memory_order_release, true /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -169,8 +163,7 @@ instruct weakCompareAndSwapN_shenandoah(iRegINoSp res, indirect mem, iRegN oldva
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     // Weak is not current supported by ShenandoahBarrierSet::cmpxchg_oop
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::relaxed /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_release, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -190,8 +183,7 @@ instruct compareAndExchangeNAcq_shenandoah(iRegNNoSp res, indirect mem, iRegN ol
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register);
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::aq /* acquire */, Assembler::rl /* release */,
-                                                   true /* is_cae */, $res$$Register);
+                                                   memory_order_seq_cst, true /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -211,8 +203,7 @@ instruct compareAndExchangePAcq_shenandoah(iRegPNoSp res, indirect mem, iRegP ol
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register);
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::aq /* acquire */, Assembler::rl /* release */,
-                                                   true /* is_cae */, $res$$Register);
+                                                   memory_order_seq_cst, true /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -231,8 +222,7 @@ instruct weakCompareAndSwapP_shenandoah(iRegINoSp res, indirect mem, iRegP oldva
     Register tmp = $tmp$$Register;
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::relaxed /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_release, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -254,8 +244,7 @@ instruct weakCompareAndSwapNAcq_shenandoah(iRegINoSp res, indirect mem, iRegN ol
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     // Weak is not current supported by ShenandoahBarrierSet::cmpxchg_oop
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::aq /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_seq_cst, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);
@@ -277,8 +266,7 @@ instruct weakCompareAndSwapPAcq_shenandoah(iRegINoSp res, indirect mem, iRegP ol
     __ mv(tmp, $oldval$$Register); // Must not clobber oldval.
     // Weak is not current supported by ShenandoahBarrierSet::cmpxchg_oop
     ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm, $mem$$Register, tmp, $newval$$Register,
-                                                   Assembler::aq /* acquire */, Assembler::rl /* release */,
-                                                   false /* is_cae */, $res$$Register);
+                                                   memory_order_seq_cst, false /* is_cae */, $res$$Register);
   %}
 
   ins_pipe(pipe_slow);

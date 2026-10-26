@@ -47,8 +47,8 @@ void LIR_OpShenandoahCompareAndSwap::emit_code(LIR_Assembler* masm) {
     newval = tmp2;
   }
 
-  ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm->masm(), addr, cmpval, newval, /* acquire */ Assembler::aq,
-                                                 /* release */ Assembler::rl, /* is_cae */ false, result);
+  ShenandoahBarrierSet::assembler()->cmpxchg_oop(masm->masm(), addr, cmpval, newval, memory_order_seq_cst,
+                                                 /* is_cae */ false, result);
 }
 
 #undef __

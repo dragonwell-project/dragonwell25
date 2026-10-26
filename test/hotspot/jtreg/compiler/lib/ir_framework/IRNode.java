@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -545,9 +545,34 @@ public class IRNode {
         trapNodes(CLASS_CHECK_TRAP, "class_check");
     }
 
+    public static final String CMOVE_F = PREFIX + "CMOVE_F" + POSTFIX;
+    static {
+        beforeMatchingNameRegex(CMOVE_F, "CMoveF");
+    }
+
+    public static final String CMOVE_D = PREFIX + "CMOVE_D" + POSTFIX;
+    static {
+        beforeMatchingNameRegex(CMOVE_D, "CMoveD");
+    }
+
     public static final String CMOVE_I = PREFIX + "CMOVE_I" + POSTFIX;
     static {
         beforeMatchingNameRegex(CMOVE_I, "CMoveI");
+    }
+
+    public static final String CMOVE_L = PREFIX + "CMOVE_L" + POSTFIX;
+    static {
+        beforeMatchingNameRegex(CMOVE_L, "CMoveL");
+    }
+
+    public static final String CMP_F = PREFIX + "CMP_F" + POSTFIX;
+    static {
+        beforeMatchingNameRegex(CMP_F, "CmpF");
+    }
+
+    public static final String CMP_D = PREFIX + "CMP_D" + POSTFIX;
+    static {
+        beforeMatchingNameRegex(CMP_D, "CmpD");
     }
 
     public static final String CMP_I = PREFIX + "CMP_I" + POSTFIX;
@@ -583,6 +608,11 @@ public class IRNode {
     public static final String CMP_P = PREFIX + "CMP_P" + POSTFIX;
     static {
         beforeMatchingNameRegex(CMP_P, "CmpP");
+    }
+
+    public static final String CMP_N = PREFIX + "CMP_N" + POSTFIX;
+    static {
+        beforeMatchingNameRegex(CMP_N, "CmpN");
     }
 
     public static final String CMP_LT_MASK = PREFIX + "CMP_LT_MASK" + POSTFIX;
@@ -1386,6 +1416,16 @@ public class IRNode {
         vectorNode(UMAX_VL, "UMaxV", TYPE_LONG);
     }
 
+    public static final String AARCH64_VMASK_ALL_IMM_I = PREFIX + "AARCH64_VMASK_ALL_IMM_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(AARCH64_VMASK_ALL_IMM_I, "vmaskAll_immI");
+    }
+
+    public static final String AARCH64_VMASK_ALL_IMM_L = PREFIX + "AARCH64_VMASK_ALL_IMM_L" + POSTFIX;
+    static {
+        machOnlyNameRegex(AARCH64_VMASK_ALL_IMM_L, "vmaskAll_immL");
+    }
+
     // Can only be used if avx512_vnni is available.
     public static final String MUL_ADD_VS2VI_VNNI = PREFIX + "MUL_ADD_VS2VI_VNNI" + POSTFIX;
     static {
@@ -1480,6 +1520,16 @@ public class IRNode {
     public static final String MAX_REDUCTION_V = PREFIX + "MAX_REDUCTION_V" + POSTFIX;
     static {
         superWordNodes(MAX_REDUCTION_V, "MaxReductionV");
+    }
+
+    public static final String UMIN_REDUCTION_V = PREFIX + "UMIN_REDUCTION_V" + POSTFIX;
+    static {
+        superWordNodes(UMIN_REDUCTION_V, "UMinReductionV");
+    }
+
+    public static final String UMAX_REDUCTION_V = PREFIX + "UMAX_REDUCTION_V" + POSTFIX;
+    static {
+        superWordNodes(UMAX_REDUCTION_V, "UMaxReductionV");
     }
 
     public static final String NEG_VF = VECTOR_PREFIX + "NEG_VF" + POSTFIX;
@@ -2194,6 +2244,23 @@ public class IRNode {
         machOnlyNameRegex(RISCV_VAND_NOTL_VX, "vand_notL_vx");
     }
 
+    public static final String RISCV_LOAD_N2P_UNSCALED = PREFIX + "RISCV_LOAD_N2P_UNSCALED" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_LOAD_N2P_UNSCALED, "loadN2P_unscaled");
+    }
+
+    // Conditional move whose condition is a VectorTest. One rule per value type.
+    // Exclude the separate _negate rules that materialize boolean results.
+    public static final String RISCV_CMOVE_VTEST_ANYTRUE = PREFIX + "RISCV_CMOVE_VTEST_ANYTRUE" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_CMOVE_VTEST_ANYTRUE, "cmov[ILFDPN]_vtest_anytrue\\b");
+    }
+
+    public static final String RISCV_CMOVE_VTEST_ALLTRUE = PREFIX + "RISCV_CMOVE_VTEST_ALLTRUE" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_CMOVE_VTEST_ALLTRUE, "cmov[ILFDPN]_vtest_alltrue\\b");
+    }
+
     public static final String RISCV_VAND_NOTI_VX_MASKED = PREFIX + "RISCV_VAND_NOTI_VX_MASKED" + POSTFIX;
     static {
         machOnlyNameRegex(RISCV_VAND_NOTI_VX_MASKED, "vand_notI_vx_masked");
@@ -2202,6 +2269,16 @@ public class IRNode {
     public static final String RISCV_VAND_NOTL_VX_MASKED = PREFIX + "RISCV_VAND_NOTL_VX_MASKED" + POSTFIX;
     static {
         machOnlyNameRegex(RISCV_VAND_NOTL_VX_MASKED, "vand_notL_vx_masked");
+    }
+
+    public static final String RISCV_VCOMPRESS_BITS_MASKED = PREFIX + "RISCV_VCOMPRESS_BITS_MASKED" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VCOMPRESS_BITS_MASKED, "vcompressBits_masked");
+    }
+
+    public static final String RISCV_VEXPAND_BITS_MASKED = PREFIX + "RISCV_VEXPAND_BITS_MASKED" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VEXPAND_BITS_MASKED, "vexpandBits_masked");
     }
 
     public static final String VECTOR_BLEND_B = VECTOR_PREFIX + "VECTOR_BLEND_B" + POSTFIX;
@@ -2509,9 +2586,64 @@ public class IRNode {
         machOnlyNameRegex(RISCV_VFMADD_MASKED, "vfmadd_masked");
     }
 
+    public static final String VMASK_AND_NOT_I = PREFIX + "VMASK_AND_NOT_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(VMASK_AND_NOT_I, "vmask_and_notI");
+    }
+
     public static final String VMASK_AND_NOT_L = PREFIX + "VMASK_AND_NOT_L" + POSTFIX;
     static {
         machOnlyNameRegex(VMASK_AND_NOT_L, "vmask_and_notL");
+    }
+
+    public static final String RISCV_VMASK_OR_NOT_I = PREFIX + "RISCV_VMASK_OR_NOT_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_OR_NOT_I, "vmask_or_notI");
+    }
+
+    public static final String RISCV_VMASK_OR_NOT_L = PREFIX + "RISCV_VMASK_OR_NOT_L" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_OR_NOT_L, "vmask_or_notL");
+    }
+
+    public static final String RISCV_VMASK_NAND_I = PREFIX + "RISCV_VMASK_NAND_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_NAND_I, "vmask_nandI");
+    }
+
+    public static final String RISCV_VMASK_NAND_L = PREFIX + "RISCV_VMASK_NAND_L" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_NAND_L, "vmask_nandL");
+    }
+
+    public static final String RISCV_VMASK_NOR_I = PREFIX + "RISCV_VMASK_NOR_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_NOR_I, "vmask_norI");
+    }
+
+    public static final String RISCV_VMASK_NOR_L = PREFIX + "RISCV_VMASK_NOR_L" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_NOR_L, "vmask_norL");
+    }
+
+    public static final String RISCV_VMASK_XNOR_I = PREFIX + "RISCV_VMASK_XNOR_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_XNOR_I, "vmask_xnorI");
+    }
+
+    public static final String RISCV_VMASK_XNOR_L = PREFIX + "RISCV_VMASK_XNOR_L" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_XNOR_L, "vmask_xnorL");
+    }
+
+    public static final String RISCV_VMASK_NOT_I = PREFIX + "RISCV_VMASK_NOT_I" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_NOT_I, "vmask_notI");
+    }
+
+    public static final String RISCV_VMASK_NOT_L = PREFIX + "RISCV_VMASK_NOT_L" + POSTFIX;
+    static {
+        machOnlyNameRegex(RISCV_VMASK_NOT_L, "vmask_notL");
     }
 
     public static final String VMLA = PREFIX + "VMLA" + POSTFIX;

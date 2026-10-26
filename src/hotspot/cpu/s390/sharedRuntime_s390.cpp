@@ -1865,16 +1865,13 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
       break;
   }
 
-  // Switch thread to "native transition" state before reading the synchronization state.
-  // This additional state is necessary because reading and testing the synchronization
-  // state is not atomic w.r.t. GC, as this scenario demonstrates:
-  //   - Java thread A, in _thread_in_native state, loads _not_synchronized and is preempted.
-  //   - VM thread changes sync state to synchronizing and suspends threads for GC.
-  //   - Thread A is resumed to finish this native method, but doesn't block here since it
-  //     didn't see any synchronization in progress, and escapes.
+  // Transition from _thread_in_native to _thread_in_Java.
+  __ set_thread_state(_thread_in_Java);
 
-  // Transition from _thread_in_native to _thread_in_native_trans.
-  __ set_thread_state(_thread_in_native_trans);
+  // Force this write out before the read below.
+  if (!UseSystemMemoryBarrier) {
+    __ z_fence();
+  }
 
   // Safepoint synchronization
   //--------------------------------------------------------------------
@@ -1888,11 +1885,6 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
 
     save_native_result(masm, ret_type, workspace_slot_offset); // Make Z_R2 available as work reg.
 
-    // Force this write out before the read below.
-    if (!UseSystemMemoryBarrier) {
-      __ z_fence();
-    }
-
     __ safepoint_poll(sync, Z_R1);
 
     __ load_and_test_int(Z_R0, Address(Z_thread, JavaThread::suspend_flags_offset()));
@@ -1904,22 +1896,14 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
     // a distinct one for this pc.
     //
     __ bind(sync);
-    __ z_acquire();
 
-    address entry_point = CAST_FROM_FN_PTR(address, JavaThread::check_special_condition_for_native_trans);
+    address entry_point = CAST_FROM_FN_PTR(address, SharedRuntime::check_special_condition_for_native_trans);
 
     __ call_VM_leaf(entry_point, Z_thread);
 
     __ bind(no_block);
     restore_native_result(masm, ret_type, workspace_slot_offset);
   }
-
-  //--------------------------------------------------------------------
-  // Thread state is thread_in_native_trans. Any safepoint blocking has
-  // already happened so we can now change state to _thread_in_Java.
-  //--------------------------------------------------------------------
-  // Transition from _thread_in_native_trans to _thread_in_Java.
-  __ set_thread_state(_thread_in_Java);
 
   //--------------------------------------------------------------------
   // Reguard any pages if necessary.

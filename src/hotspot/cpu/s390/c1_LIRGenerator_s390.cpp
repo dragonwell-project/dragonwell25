@@ -1040,12 +1040,15 @@ void LIRGenerator::trace_block_entry(BlockBegin* block) {
 
 void LIRGenerator::volatile_field_store(LIR_Opr value, LIR_Address* address,
                                         CodeEmitInfo* info) {
+  __ membar_release();
   __ store(value, address, info);
+  __ membar();
 }
 
 void LIRGenerator::volatile_field_load(LIR_Address* address, LIR_Opr result,
                                        CodeEmitInfo* info) {
   __ load(address, result, info);
+  __ membar_acquire();
 }
 
 void LIRGenerator::do_update_CRC32(Intrinsic* x) {

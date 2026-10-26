@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2026, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2014, 2020, Red Hat Inc. All rights reserved.
  * Copyright (c) 2020, 2024, Huawei Technologies Co., Ltd. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -31,6 +31,8 @@
 #include "code/vmreg.hpp"
 #include "metaprogramming/enableIf.hpp"
 #include "oops/compressedOops.hpp"
+#include "runtime/atomic.hpp"
+#include "utilities/globalDefinitions.hpp"
 #include "utilities/powerOfTwo.hpp"
 
 // MacroAssembler extends Assembler by frequently used macros.
@@ -184,8 +186,8 @@ class MacroAssembler: public Assembler {
   void resolve_jobject(Register value, Register tmp1, Register tmp2);
   void resolve_global_jobject(Register value, Register tmp1, Register tmp2);
 
-  void movoop(Register dst, jobject obj);
-  void mov_metadata(Register dst, Metadata* obj);
+  void movoop(Register dst, jobject obj, Register tmp = noreg);
+  void mov_metadata(Register dst, Metadata* obj, Register tmp = noreg);
   void bang_stack_size(Register size, Register tmp);
   void set_narrow_oop(Register dst, jobject obj);
   void set_narrow_klass(Register dst, Klass* k);
@@ -198,7 +200,12 @@ class MacroAssembler: public Assembler {
   void load_klass(Register dst, Register src, Register tmp = t0);
   void load_narrow_klass_compact(Register dst, Register src);
   void store_klass(Register dst, Register src, Register tmp = t0);
-  void cmp_klass_compressed(Register oop, Register trial_klass, Register tmp, Label &L, bool equal);
+  void cmp_klass_beq(Register obj, Register klass,
+                     Register tmp1, Register tmp2,
+                     Label &L, bool is_far = false);
+  void cmp_klass_bne(Register obj, Register klass,
+                     Register tmp1, Register tmp2,
+                     Label &L, bool is_far = false);
 
   void encode_klass_not_null(Register r, Register tmp = t0);
   void decode_klass_not_null(Register r, Register tmp = t0);
@@ -389,6 +396,8 @@ class MacroAssembler: public Assembler {
                            Label& L_success);
 
   Address argument_address(RegisterOrConstant arg_slot, int extra_slot_offset = 0);
+
+  void profile_receiver_type(Register recv, Register mdp, int mdp_offset);
 
   // only if +VerifyOops
   void _verify_oop(Register reg, const char* s, const char* file, int line);
@@ -647,6 +656,9 @@ class MacroAssembler: public Assembler {
   void bltz(Register Rs, const address dest);
   void bgtz(Register Rs, const address dest);
 
+  void cmov_zicond_eqz(Register dst, Register src, Register cond, Register tmp = t0);
+  void cmov_zicond_nez(Register dst, Register src, Register cond, Register tmp = t0);
+
   void cmov_eq(Register cmp1, Register cmp2, Register dst, Register src);
   void cmov_ne(Register cmp1, Register cmp2, Register dst, Register src);
   void cmov_le(Register cmp1, Register cmp2, Register dst, Register src);
@@ -664,6 +676,24 @@ class MacroAssembler: public Assembler {
   void cmov_cmp_fp_ge(FloatRegister cmp1, FloatRegister cmp2, Register dst, Register src, bool is_single);
   void cmov_cmp_fp_lt(FloatRegister cmp1, FloatRegister cmp2, Register dst, Register src, bool is_single);
   void cmov_cmp_fp_gt(FloatRegister cmp1, FloatRegister cmp2, Register dst, Register src, bool is_single);
+
+  void cmov_fp_eq(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_ne(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_le(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_leu(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_ge(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_geu(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_lt(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_ltu(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_gt(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+  void cmov_fp_gtu(Register cmp1, Register cmp2, FloatRegister dst, FloatRegister src, bool is_single);
+
+  void cmov_fp_cmp_fp_eq(FloatRegister cmp1, FloatRegister cmp2, FloatRegister dst, FloatRegister src, bool cmp_single, bool cmov_single);
+  void cmov_fp_cmp_fp_ne(FloatRegister cmp1, FloatRegister cmp2, FloatRegister dst, FloatRegister src, bool cmp_single, bool cmov_single);
+  void cmov_fp_cmp_fp_le(FloatRegister cmp1, FloatRegister cmp2, FloatRegister dst, FloatRegister src, bool cmp_single, bool cmov_single);
+  void cmov_fp_cmp_fp_ge(FloatRegister cmp1, FloatRegister cmp2, FloatRegister dst, FloatRegister src, bool cmp_single, bool cmov_single);
+  void cmov_fp_cmp_fp_lt(FloatRegister cmp1, FloatRegister cmp2, FloatRegister dst, FloatRegister src, bool cmp_single, bool cmov_single);
+  void cmov_fp_cmp_fp_gt(FloatRegister cmp1, FloatRegister cmp2, FloatRegister dst, FloatRegister src, bool cmp_single, bool cmov_single);
 
  public:
   // We try to follow risc-v asm menomics.
@@ -1142,6 +1172,58 @@ public:
 
 #undef INSN
 
+#define INSN(NAME, LOAD_INSN, ZALASR_INSN, BITS)                               \
+  void NAME(Register Rd, Register Rs1) {                                       \
+    if (UseZalasr) {                                                           \
+      Assembler::ZALASR_INSN(Rd, Rs1);                                         \
+      zext(Rd, Rd, BITS);                                                      \
+    } else {                                                                   \
+      Assembler::LOAD_INSN(Rd, Rs1, 0);                                        \
+      membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);            \
+    }                                                                          \
+  }
+
+INSN(lbu_acquire, lbu, lb_aq,  8);
+INSN(lhu_acquire, lhu, lh_aq, 16);
+INSN(lwu_acquire, lwu, lw_aq, 32);
+
+#undef INSN
+
+  void lw_acquire(Register Rd, Register Rs1) {
+    if (UseZalasr) {
+      Assembler::lw_aq(Rd, Rs1);
+    } else {
+      Assembler::lw(Rd, Rs1, 0);
+      membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
+    }
+  }
+
+  void ld_acquire(Register Rd, Register Rs1) {
+    if (UseZalasr) {
+      Assembler::ld_aq(Rd, Rs1);
+    } else {
+      Assembler::ld(Rd, Rs1, 0);
+      membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
+    }
+  }
+
+#define INSN(NAME, STORE_INSN, ZALASR_INSN)                                    \
+  void NAME(Register Rs2, Register Rs1) {                                      \
+    if (UseZalasr) {                                                           \
+      Assembler::ZALASR_INSN(Rs2, Rs1);                                        \
+    } else {                                                                   \
+      membar(MacroAssembler::LoadStore | MacroAssembler::StoreStore);          \
+      Assembler::STORE_INSN(Rs2, Rs1, 0);                                      \
+    }                                                                          \
+  }
+
+INSN(sb_release, sb, sb_rl);
+INSN(sh_release, sh, sh_rl);
+INSN(sw_release, sw, sw_rl);
+INSN(sd_release, sd, sd_rl);
+
+#undef INSN
+
 #define INSN(NAME)                                                                                 \
   void NAME(FloatRegister Rs, address dest, Register temp = t0) {                                  \
     assert_cond(dest != nullptr);                                                                  \
@@ -1191,12 +1273,12 @@ public:
   void cmpxchg(Register addr, Register expected,
                Register new_val,
                Assembler::operand_size size,
-               Assembler::Aqrl acquire, Assembler::Aqrl release,
+               enum atomic_memory_order order,
                Register result, bool result_as_bool = false);
   void weak_cmpxchg(Register addr, Register expected,
                     Register new_val,
                     Assembler::operand_size size,
-                    Assembler::Aqrl acquire, Assembler::Aqrl release,
+                    enum atomic_memory_order order,
                     Register result);
   void cmpxchg_narrow_value_helper(Register addr, Register expected, Register new_val,
                                    Assembler::operand_size size,
@@ -1204,13 +1286,13 @@ public:
   void cmpxchg_narrow_value(Register addr, Register expected,
                             Register new_val,
                             Assembler::operand_size size,
-                            Assembler::Aqrl acquire, Assembler::Aqrl release,
+                            enum atomic_memory_order order,
                             Register result, bool result_as_bool,
                             Register tmp1, Register tmp2, Register tmp3);
   void weak_cmpxchg_narrow_value(Register addr, Register expected,
                                  Register new_val,
                                  Assembler::operand_size size,
-                                 Assembler::Aqrl acquire, Assembler::Aqrl release,
+                                 enum atomic_memory_order order,
                                  Register result,
                                  Register tmp1, Register tmp2, Register tmp3);
 
@@ -1331,9 +1413,8 @@ public:
   void decrement(const Address dst, int64_t value = 1, Register tmp1 = t0, Register tmp2 = t1);
   void decrementw(const Address dst, int32_t value = 1, Register tmp1 = t0, Register tmp2 = t1);
 
-  void cmpptr(Register src1, const Address &src2, Label& equal, Register tmp = t0);
-
   void clinit_barrier(Register klass, Register tmp, Label* L_fast_path = nullptr, Label* L_slow_path = nullptr);
+
   void load_method_holder_cld(Register result, Register method);
   void load_method_holder(Register holder, Register method);
 
@@ -1351,6 +1432,23 @@ public:
         Register table0, Register table1, Register table2, Register table3,
         bool upper);
   void update_byte_crc32(Register crc, Register val, Register table);
+
+  // CRC32C code for java.util.zip.CRC32C::updateBytes() intrinsic,
+  // accelerated with Zbc carry-less multiplication (clmul/clmulh).
+  void kernel_crc32c(Register crc, Register buf, Register len,
+        Register byte_table, Register clmul_table,
+        Register tmp1, Register tmp2, Register tmp3, Register tmp4, Register tmp5, Register tmp6);
+  void kernel_crc32c_clmul_fold(Register crc, Register buf, Register len,
+        Register byte_table, Register clmul_table,
+        Register tmp1, Register tmp2, Register tmp3, Register tmp4, Register tmp5, Register tmp6);
+  void kernel_crc32c_clmul_align(Register crc, Register buf, Register len,
+        Register table, Register tmp1, Register tmp2);
+  void kernel_crc32c_clmul_fold_128(Register accum_lo, Register accum_hi,
+        Register k1, Register k2, Register buf, Register tmp1, Register tmp2);
+  void kernel_crc32c_clmul_reduce_128_to_64(Register accum_lo, Register accum_hi,
+        Register clmul_table, Register k, Register tmp1, Register tmp2);
+  void kernel_crc32c_clmul_barrett_64_to_32(Register accum_lo, Register clmul_table,
+        Register k, Register tmp);
 
 #ifdef COMPILER2
   void vector_update_crc32(Register crc, Register buf, Register len,
@@ -1414,8 +1512,10 @@ public:
   void zero_memory(Register addr, Register len, Register tmp);
   void zero_dcache_blocks(Register base, Register cnt, Register tmp1, Register tmp2);
 
-  // shift left by shamt and add
-  void shadd(Register Rd, Register Rs1, Register Rs2, Register tmp, int shamt);
+  void shift_left_add(Register Rd, Register Rs1, Register Rs2, int shamt);
+  void shift_left_add(Register Rd, Register Rs1, Register Rs2, int shamt, Register tmp);
+
+  void shadd(Register Rd, Register Rs1, Register Rs2, int shamt);
 
   // test single bit in Rs, result is set to Rd
   void test_bit(Register Rd, Register Rs, uint32_t bit_pos);
@@ -1434,6 +1534,13 @@ public:
 
   // Helper routine processing the slow path of NaN when converting float to float16
   void float_to_float16_NaN(Register dst, FloatRegister src, Register tmp1, Register tmp2);
+
+  // j.l.Float.float16ToFloat and j.l.Float.floatToFloat16, with the NaN handling
+  // emitted inline. C2 uses C2_MacroAssembler::float16_to_float() and
+  // C2_MacroAssembler::float_to_float16() instead, which keep it out of line.
+  // Both clobber t0 and t1.
+  void flt16_to_flt(FloatRegister dst, Register src);
+  void flt_to_flt16(Register dst, FloatRegister src, FloatRegister ftmp);
 
   // vector load/store unit-stride instructions
   void vlex_v(VectorRegister vd, Register base, Assembler::SEW sew, VectorMask vm = unmasked) {
@@ -1473,11 +1580,15 @@ public:
   }
 
   // vector pseudo instructions
-  // rotate vector register left with shift bits, 32-bit version
+  // Rotate 32-bit vector elements left. The caller must configure SEW=32.
   inline void vrole32_vi(VectorRegister vd, uint32_t shift, VectorRegister tmp_vr) {
-    vsrl_vi(tmp_vr, vd, 32 - shift);
-    vsll_vi(vd, vd, shift);
-    vor_vv(vd, vd, tmp_vr);
+    if (UseZvbb) {
+      vror_vi(vd, vd, 32 - shift);
+    } else {
+      vsrl_vi(tmp_vr, vd, 32 - shift);
+      vsll_vi(vd, vd, shift);
+      vor_vv(vd, vd, tmp_vr);
+    }
   }
 
   inline void vl1r_v(VectorRegister vd, Register rs) {
@@ -1592,6 +1703,8 @@ public:
   void zext(Register dst, Register src, int bits);
   void sext(Register dst, Register src, int bits);
 
+  void narrow_subword_type(Register reg, BasicType bt);
+
 private:
   void cmp_x2i(Register dst, Register src1, Register src2, Register tmp, bool is_signed = true);
 
@@ -1675,7 +1788,7 @@ public:
     assert_cond(instr != nullptr);
     return extract_opcode(instr) == 0b0010011 &&
            extract_funct3(instr) == 0b101 &&
-           Assembler::extract(((unsigned*)instr)[0], 31, 26) == 0b000000;
+           Assembler::extract(Assembler::ld_instr(instr), 31, 26) == 0b000000;
   }
 
   static bool is_slli_shift_at(address instr, uint32_t shift) {

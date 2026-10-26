@@ -97,7 +97,7 @@ class InterpreterMacroAssembler: public MacroAssembler {
 
   void restore_locals() {
     ld(xlocals, Address(fp, frame::interpreter_frame_locals_offset * wordSize));
-    shadd(xlocals, xlocals, fp, t0, LogBytesPerWord);
+    shift_left_add(xlocals, xlocals, fp, LogBytesPerWord);
   }
 
   void restore_constant_pool_cache() {
@@ -107,7 +107,7 @@ class InterpreterMacroAssembler: public MacroAssembler {
   void restore_sp_after_call() {
     Label L;
     ld(t0, Address(fp, frame::interpreter_frame_extended_sp_offset * wordSize));
-    shadd(t0, t0, fp, t0, LogBytesPerWord);
+    shift_left_add(t0, t0, fp, LogBytesPerWord);
 #ifdef ASSERT
     bnez(t0, L);
     stop("SP is null");
@@ -120,7 +120,7 @@ class InterpreterMacroAssembler: public MacroAssembler {
 #ifdef ASSERT
     Label L;
     ld(t0, Address(fp, frame::interpreter_frame_extended_sp_offset * wordSize));
-    shadd(t0, t0, fp, t0, LogBytesPerWord);
+    shift_left_add(t0, t0, fp, LogBytesPerWord);
     beq(sp, t0, L);
     stop(msg);
     bind(L);
@@ -183,7 +183,7 @@ class InterpreterMacroAssembler: public MacroAssembler {
 
   void empty_expression_stack() {
     ld(t0, Address(fp, frame::interpreter_frame_monitor_block_top_offset * wordSize));
-    shadd(esp, t0, fp, t0, LogBytesPerWord);
+    shift_left_add(esp, t0, fp, LogBytesPerWord, t0);
     // null last_sp until next java call
     sd(zr, Address(fp, frame::interpreter_frame_last_sp_offset * wordSize));
   }
@@ -262,14 +262,6 @@ class InterpreterMacroAssembler: public MacroAssembler {
                         Register test_value_out,
                         Label& not_equal_continue);
 
-  void record_klass_in_profile(Register receiver, Register mdp,
-                               Register reg2);
-  void record_klass_in_profile_helper(Register receiver, Register mdp,
-                                      Register reg2, Label& done);
-  void record_item_in_profile_helper(Register item, Register mdp,
-                                     Register reg2, int start_row, Label& done, int total_rows,
-                                     OffsetFunction item_offset_fn, OffsetFunction item_count_offset_fn);
-
   void update_mdp_by_offset(Register mdp_in, int offset_of_offset);
   void update_mdp_by_offset(Register mdp_in, Register reg, int offset_of_disp);
   void update_mdp_by_constant(Register mdp_in, int constant);
@@ -278,16 +270,15 @@ class InterpreterMacroAssembler: public MacroAssembler {
   // narrow int return value
   void narrow(Register result);
 
-  void profile_taken_branch(Register mdp, Register bumped_count);
+  void profile_taken_branch(Register mdp);
   void profile_not_taken_branch(Register mdp);
   void profile_call(Register mdp);
   void profile_final_call(Register mdp);
   void profile_virtual_call(Register receiver, Register mdp,
-                            Register t1,
                             bool receiver_can_be_null = false);
   void profile_ret(Register return_bci, Register mdp);
   void profile_null_seen(Register mdp);
-  void profile_typecheck(Register mdp, Register klass, Register temp);
+  void profile_typecheck(Register mdp, Register klass);
   void profile_typecheck_failed(Register mdp);
   void profile_switch_default(Register mdp);
   void profile_switch_case(Register index_in_scratch, Register mdp,
@@ -318,12 +309,9 @@ class InterpreterMacroAssembler: public MacroAssembler {
   void load_method_entry(Register cache, Register index, int bcp_offset = 1);
 
   void verify_field_offset(Register reg) NOT_DEBUG_RETURN;
-
-#ifdef ASSERT
   void verify_access_flags(Register access_flags, uint32_t flag,
-                           const char* msg, bool stop_by_hit = true);
-  void verify_frame_setup();
-#endif
+                           const char* msg, bool stop_by_hit = true) NOT_DEBUG_RETURN;
+  void verify_frame_setup() NOT_DEBUG_RETURN;
 };
 
 #endif // CPU_RISCV_INTERP_MASM_RISCV_HPP

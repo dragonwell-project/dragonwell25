@@ -1478,21 +1478,10 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   // In order for GC to work, don't clear the last_Java_sp until after
   // blocking.
 
-  //=============================================================================
-  // Switch thread to "native transition" state before reading the
-  // synchronization state. This additional state is necessary
-  // because reading and testing the synchronization state is not
-  // atomic w.r.t. GC, as this scenario demonstrates: Java thread A,
-  // in _thread_in_native state, loads _not_synchronized and is
-  // preempted. VM thread changes sync state to synchronizing and
-  // suspends threads for GC. Thread A is resumed to finish this
-  // native method, but doesn't block here since it didn't see any
-  // synchronization in progress, and escapes.
-
   // We use release_store_fence to update values like the thread state, where
   // we don't want the current thread to continue until all our prior memory
   // accesses (including the new thread state) are visible to other threads.
-  __ li(R0/*thread_state*/, _thread_in_native_trans);
+  __ li(R0/*thread_state*/, _thread_in_Java);
   __ release();
   __ stw(R0/*thread_state*/, thread_(thread_state));
   if (!UseSystemMemoryBarrier) {
@@ -1500,13 +1489,8 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   }
 
   // Now before we return to java we must look for a current safepoint
-  // (a new safepoint can not start since we entered native_trans).
-  // We must check here because a current safepoint could be modifying
-  // the callers registers right this moment.
-
-  // Acquire isn't strictly necessary here because of the fence, but
-  // sync_state is declared to be volatile, so we do it anyway
-  // (cmp-br-isync on one path, release (same as acquire on PPC64) on the other path).
+  // (a new safepoint can not start since we entered _thread_in_vm).
+  // We must check here because a current safepoint could be in progress.
 
   Label do_safepoint, sync_check_done;
   // No synchronization in progress nor yet synchronized.
@@ -1519,20 +1503,19 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   __ beq(CR1, sync_check_done);
 
   __ bind(do_safepoint);
-  __ isync();
   // Block. We do the call directly and leave the current
   // last_Java_frame setup undisturbed. We must save any possible
   // native result across the call. No oop is present.
 
   __ mr(R3_ARG1, R16_thread);
-  __ call_c(CAST_FROM_FN_PTR(address, JavaThread::check_special_condition_for_native_trans));
+  __ call_c(CAST_FROM_FN_PTR(address, SharedRuntime::check_special_condition_for_native_trans));
 
   __ bind(sync_check_done);
 
   //=============================================================================
   // <<<<<< Back in Interpreter Frame >>>>>
 
-  // We are in thread_in_native_trans here and back in the normal
+  // We are in _thread_in_vm here and back in the normal
   // interpreter frame. We don't have to do anything special about
   // safepoints and we can switch to Java mode anytime we are ready.
 
@@ -1546,14 +1529,6 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   // On PPC64, we have stored the result directly after the native call.
 
   //=============================================================================
-  // Back in Java
-
-  // We use release_store_fence to update values like the thread state, where
-  // we don't want the current thread to continue until all our prior memory
-  // accesses (including the new thread state) are visible to other threads.
-  __ li(R0/*thread_state*/, _thread_in_Java);
-  __ lwsync(); // Acquire safepoint and suspend state, release thread state.
-  __ stw(R0/*thread_state*/, thread_(thread_state));
 
   if (support_vthread_preemption) {
     // Check preemption for Object.wait()

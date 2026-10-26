@@ -72,17 +72,22 @@ void MethodHandles::verify_klass(MacroAssembler* _masm,
   InstanceKlass** klass_addr = vmClasses::klass_addr_at(klass_id);
   Klass* klass = vmClasses::klass_at(klass_id);
   Register temp1 = t1;
-  Register temp2 = t0; // used by MacroAssembler::cmpptr
+  Register temp2 = t0;
   Label L_ok, L_bad;
   BLOCK_COMMENT("verify_klass {");
   __ verify_oop(obj);
   __ beqz(obj, L_bad);
+
   __ push_reg(RegSet::of(temp1, temp2), sp);
   __ load_klass(temp1, obj, temp2);
-  __ cmpptr(temp1, ExternalAddress((address) klass_addr), L_ok);
+  __ ld(temp2, ExternalAddress((address)klass_addr));
+  __ beq(temp1, temp2, L_ok);
+
   intptr_t super_check_offset = klass->super_check_offset();
   __ ld(temp1, Address(temp1, super_check_offset));
-  __ cmpptr(temp1, ExternalAddress((address) klass_addr), L_ok);
+  __ ld(temp2, ExternalAddress((address)klass_addr));
+  __ beq(temp1, temp2, L_ok);
+
   __ pop_reg(RegSet::of(temp1, temp2), sp);
   __ bind(L_bad);
   __ stop(error_message);
@@ -105,8 +110,8 @@ void MethodHandles::verify_method(MacroAssembler* _masm, Register method, vmIntr
     switch (iid) {
       case vmIntrinsicID::_invokeBasic:
         // Require compiled LambdaForm class to be fully initialized.
-        __ lbu(t0, Address(method_holder, InstanceKlass::init_state_offset()));
-        __ membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
+        __ la(t0, Address(method_holder, InstanceKlass::init_state_offset()));
+        __ lbu_acquire(t0, t0);
         __ mv(t1, InstanceKlass::fully_initialized);
         __ beq(t0, t1, L_ok);
         break;
@@ -118,8 +123,8 @@ void MethodHandles::verify_method(MacroAssembler* _masm, Register method, vmIntr
       case vmIntrinsicID::_linkToSpecial:
       case vmIntrinsicID::_linkToInterface:
         // Class initialization check is too strong here. Just ensure that class initialization has been initiated.
-        __ lbu(t0, Address(method_holder, InstanceKlass::init_state_offset()));
-        __ membar(MacroAssembler::LoadLoad | MacroAssembler::LoadStore);
+        __ la(t0, Address(method_holder, InstanceKlass::init_state_offset()));
+        __ lbu_acquire(t0, t0);
         __ mv(t1, InstanceKlass::being_initialized);
         __ bge(t0, t1, L_ok);
 

@@ -2551,21 +2551,8 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
   }
 
   // Publish thread state
-  // --------------------------------------------------------------------------
-
-  // Switch thread to "native transition" state before reading the
-  // synchronization state. This additional state is necessary because reading
-  // and testing the synchronization state is not atomic w.r.t. GC, as this
-  // scenario demonstrates:
-  //   - Java thread A, in _thread_in_native state, loads _not_synchronized
-  //     and is preempted.
-  //   - VM thread changes sync state to synchronizing and suspends threads
-  //     for GC.
-  //   - Thread A is resumed to finish this native method, but doesn't block
-  //     here since it didn't see any synchronization in progress, and escapes.
-
-  // Transition from _thread_in_native to _thread_in_native_trans.
-  __ li(R0, _thread_in_native_trans);
+  // Transition from _thread_in_native.
+  __ li(R0, _thread_in_Java);
   __ release();
   // TODO: PPC port assert(4 == JavaThread::sz_thread_state(), "unexpected field size");
   __ stw(R0, thread_(thread_state));
@@ -2589,7 +2576,6 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
     Register suspend_flags   = r_temp_6;
 
     // No synchronization in progress nor yet synchronized
-    // (cmp-br-isync on one path, release (same as acquire on PPC64) on the other path).
     __ safepoint_poll(sync, sync_state, true /* at_return */, false /* in_nmethod */);
 
     // Not suspended.
@@ -2603,27 +2589,14 @@ nmethod *SharedRuntime::generate_native_wrapper(MacroAssembler *masm,
     // lets us share the oopMap we used when we went native rather than create
     // a distinct one for this pc.
     __ bind(sync);
-    __ isync();
 
     address entry_point =
-      CAST_FROM_FN_PTR(address, JavaThread::check_special_condition_for_native_trans);
+      CAST_FROM_FN_PTR(address, SharedRuntime::check_special_condition_for_native_trans);
     save_native_result(masm, ret_type, workspace_slot_offset);
     __ call_VM_leaf(entry_point, R16_thread);
     restore_native_result(masm, ret_type, workspace_slot_offset);
 
     __ bind(no_block);
-
-    // Publish thread state.
-    // --------------------------------------------------------------------------
-
-    // Thread state is thread_in_native_trans. Any safepoint blocking has
-    // already happened so we can now change state to _thread_in_Java.
-
-    // Transition from _thread_in_native_trans to _thread_in_Java.
-    __ li(R0, _thread_in_Java);
-    __ lwsync(); // Acquire safepoint and suspend state, release thread state.
-    // TODO: PPC port assert(4 == JavaThread::sz_thread_state(), "unexpected field size");
-    __ stw(R0, thread_(thread_state));
 
     // Check preemption for Object.wait()
     if (LockingMode != LM_LEGACY && method->is_object_wait0()) {

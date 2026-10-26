@@ -330,7 +330,8 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
 
   // volatile field operations are never patchable because a klass
   // must be loaded to know it's volatile which means that the offset
-  // it always known as well.
+  // is always known as well.
+  // volatile_field_store and volatile_field_load provide MO_SEQ_CST semantics.
   void volatile_field_store(LIR_Opr value, LIR_Address* address, CodeEmitInfo* info);
   void volatile_field_load(LIR_Address* address, LIR_Opr result, CodeEmitInfo* info);
 

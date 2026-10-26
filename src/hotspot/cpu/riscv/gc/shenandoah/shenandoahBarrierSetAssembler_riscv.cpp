@@ -492,8 +492,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
                                                 Register addr,
                                                 Register expected,
                                                 Register new_val,
-                                                Assembler::Aqrl acquire,
-                                                Assembler::Aqrl release,
+                                                enum atomic_memory_order order,
                                                 bool is_cae,
                                                 Register result) {
   bool is_narrow = UseCompressedOops;
@@ -507,7 +506,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   __ bind(retry);
 
   // Step1: Try to CAS.
-  __ cmpxchg(addr, expected, new_val, size, acquire, release, /* result */ t1);
+  __ cmpxchg(addr, expected, new_val, size, order, /* result */ t1);
 
   // If success, then we are done.
   __ beq(expected, t1, success);
@@ -526,7 +525,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   __ bne(t0, expected, fail);
 
   // Step 3: CAS again using the forwarded oop.
-  __ cmpxchg(addr, t1, new_val, size, acquire, release, /* result */ t0);
+  __ cmpxchg(addr, t1, new_val, size, order, /* result */ t0);
 
   // Retry when failed.
   __ bne(t0, t1, retry);
@@ -552,6 +551,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
 void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssembler* masm, DecoratorSet decorators,
                                                                      Register start, Register count, Register tmp, RegSet saved_regs) {
   assert(ShenandoahCardBarrier, "Did you mean to enable ShenandoahCardBarrier?");
+  assert_different_registers(start, count, tmp);
 
   Label L_loop, L_done;
   const Register end = count;
@@ -561,7 +561,7 @@ void ShenandoahBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssemb
 
   // end = start + count << LogBytesPerHeapOop
   // last element address to make inclusive
-  __ shadd(end, count, start, tmp, LogBytesPerHeapOop);
+  __ shift_left_add(end, count, start, LogBytesPerHeapOop);
   __ subi(end, end, BytesPerHeapOop);
   __ srli(start, start, CardTable::card_shift());
   __ srli(end, end, CardTable::card_shift());

@@ -243,37 +243,6 @@ void LIR_Assembler::arraycopy_type_check(Register src, Register src_pos, Registe
   }
 }
 
-void LIR_Assembler::arraycopy_assert(Register src, Register dst, Register tmp, ciArrayKlass *default_type, int flags) {
-  assert(default_type != nullptr, "null default_type!");
-  BasicType basic_type = default_type->element_type()->basic_type();
-  if (basic_type == T_ARRAY) { basic_type = T_OBJECT; }
-  if (basic_type != T_OBJECT || !(flags & LIR_OpArrayCopy::type_check)) {
-    // Sanity check the known type with the incoming class.  For the
-    // primitive case the types must match exactly with src.klass and
-    // dst.klass each exactly matching the default type.  For the
-    // object array case, if no type check is needed then either the
-    // dst type is exactly the expected type and the src type is a
-    // subtype which we can't check or src is the same array as dst
-    // but not necessarily exactly of type default_type.
-    Label known_ok, halt;
-    __ mov_metadata(tmp, default_type->constant_encoding());
-    if (UseCompressedClassPointers) {
-      __ encode_klass_not_null(tmp);
-    }
-
-    if (basic_type != T_OBJECT) {
-      __ cmp_klass_compressed(dst, tmp, t0, halt, false);
-      __ cmp_klass_compressed(src, tmp, t0, known_ok, true);
-    } else {
-      __ cmp_klass_compressed(dst, tmp, t0, known_ok, true);
-      __ beq(src, dst, known_ok);
-    }
-    __ bind(halt);
-    __ stop("incorrect type information in arraycopy");
-    __ bind(known_ok);
-  }
-}
-
 void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
   ciArrayKlass *default_type = op->expected_type();
   Register src = op->src()->as_register();
@@ -304,7 +273,28 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
   }
 
 #ifdef ASSERT
-  arraycopy_assert(src, dst, tmp, default_type, flags);
+  if (basic_type != T_OBJECT || !(flags & LIR_OpArrayCopy::type_check)) {
+    // Sanity check the known type with the incoming class.  For the
+    // primitive case the types must match exactly with src.klass and
+    // dst.klass each exactly matching the default type.  For the
+    // object array case, if no type check is needed then either the
+    // dst type is exactly the expected type and the src type is a
+    // subtype which we can't check or src is the same array as dst
+    // but not necessarily exactly of type default_type.
+    Label known_ok, halt;
+    __ mov_metadata(tmp, default_type->constant_encoding());
+
+    if (basic_type != T_OBJECT) {
+      __ cmp_klass_bne(dst, tmp, t0, t1, halt);
+      __ cmp_klass_beq(src, tmp, t0, t1, known_ok);
+    } else {
+      __ cmp_klass_beq(dst, tmp, t0, t1, known_ok);
+      __ beq(src, dst, known_ok);
+    }
+    __ bind(halt);
+    __ stop("incorrect type information in arraycopy");
+    __ bind(known_ok);
+  }
 #endif
 
 #ifndef PRODUCT
@@ -335,11 +325,11 @@ void LIR_Assembler::emit_arraycopy(LIR_OpArrayCopy* op) {
 void LIR_Assembler::arraycopy_prepare_params(Register src, Register src_pos, Register length,
                                              Register dst, Register dst_pos, BasicType basic_type) {
   int scale = array_element_size(basic_type);
-  __ shadd(c_rarg0, src_pos, src, t0, scale);
-  __ addi(c_rarg0, c_rarg0, arrayOopDesc::base_offset_in_bytes(basic_type));
+  __ shift_left_add(t0, src_pos, src, scale);
+  __ addi(c_rarg0, t0, arrayOopDesc::base_offset_in_bytes(basic_type));
   assert_different_registers(c_rarg0, dst, dst_pos, length);
-  __ shadd(c_rarg1, dst_pos, dst, t0, scale);
-  __ addi(c_rarg1, c_rarg1, arrayOopDesc::base_offset_in_bytes(basic_type));
+  __ shift_left_add(t0, dst_pos, dst, scale);
+  __ addi(c_rarg1, t0, arrayOopDesc::base_offset_in_bytes(basic_type));
   assert_different_registers(c_rarg1, dst, length);
   __ mv(c_rarg2, length);
   assert_different_registers(c_rarg2, dst);
