@@ -3730,19 +3730,38 @@ void MacroAssembler::orptr(Address adr, RegisterOrConstant src, Register tmp1, R
   sd(tmp1, adr);
 }
 
-void MacroAssembler::cmp_klass_compressed(Register oop, Register trial_klass, Register tmp, Label &L, bool equal) {
+void MacroAssembler::cmp_klass_beq(Register obj, Register klass,
+                                   Register tmp1, Register tmp2,
+                                   Label &L, bool is_far) {
+  assert_different_registers(obj, klass, tmp1, tmp2);
   if (UseCompactObjectHeaders) {
-    load_narrow_klass_compact(tmp, oop);
+    load_narrow_klass_compact(tmp1, obj);
   } else if (UseCompressedClassPointers) {
-    lwu(tmp, Address(oop, oopDesc::klass_offset_in_bytes()));
+    lwu(tmp1, Address(obj, oopDesc::klass_offset_in_bytes()));
   } else {
-    ld(tmp, Address(oop, oopDesc::klass_offset_in_bytes()));
+    ld(tmp1, Address(obj, oopDesc::klass_offset_in_bytes()));
   }
-  if (equal) {
-    beq(trial_klass, tmp, L);
+  if (UseCompressedClassPointers) {
+    decode_klass_not_null(tmp1, tmp2);
+  }
+  beq(klass, tmp1, L, is_far);
+}
+
+void MacroAssembler::cmp_klass_bne(Register obj, Register klass,
+                                   Register tmp1, Register tmp2,
+                                   Label &L, bool is_far) {
+  assert_different_registers(obj, klass, tmp1, tmp2);
+  if (UseCompactObjectHeaders) {
+    load_narrow_klass_compact(tmp1, obj);
+  } else if (UseCompressedClassPointers) {
+    lwu(tmp1, Address(obj, oopDesc::klass_offset_in_bytes()));
   } else {
-    bne(trial_klass, tmp, L);
+    ld(tmp1, Address(obj, oopDesc::klass_offset_in_bytes()));
   }
+  if (UseCompressedClassPointers) {
+    decode_klass_not_null(tmp1, tmp2);
+  }
+  bne(klass, tmp1, L, is_far);
 }
 
 // Move an oop into a register.
