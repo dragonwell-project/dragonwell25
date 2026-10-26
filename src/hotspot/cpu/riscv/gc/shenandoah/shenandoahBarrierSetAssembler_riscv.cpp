@@ -492,8 +492,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
                                                 Register addr,
                                                 Register expected,
                                                 Register new_val,
-                                                Assembler::Aqrl acquire,
-                                                Assembler::Aqrl release,
+                                                enum atomic_memory_order order,
                                                 bool is_cae,
                                                 Register result) {
   bool is_narrow = UseCompressedOops;
@@ -507,7 +506,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   __ bind(retry);
 
   // Step1: Try to CAS.
-  __ cmpxchg(addr, expected, new_val, size, acquire, release, /* result */ t1);
+  __ cmpxchg(addr, expected, new_val, size, order, /* result */ t1);
 
   // If success, then we are done.
   __ beq(expected, t1, success);
@@ -526,7 +525,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
   __ bne(t0, expected, fail);
 
   // Step 3: CAS again using the forwarded oop.
-  __ cmpxchg(addr, t1, new_val, size, acquire, release, /* result */ t0);
+  __ cmpxchg(addr, t1, new_val, size, order, /* result */ t0);
 
   // Retry when failed.
   __ bne(t0, t1, retry);

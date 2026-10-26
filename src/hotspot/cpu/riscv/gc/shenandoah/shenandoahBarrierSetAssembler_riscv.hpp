@@ -93,7 +93,7 @@ public:
                                              Register obj, Register tmp, Label& slowpath);
 
   void cmpxchg_oop(MacroAssembler* masm, Register addr, Register expected, Register new_val,
-                   Assembler::Aqrl acquire, Assembler::Aqrl release, bool is_cae, Register result);
+                   enum atomic_memory_order order, bool is_cae, Register result);
 };
 
 #endif // CPU_RISCV_GC_SHENANDOAH_SHENANDOAHBARRIERSETASSEMBLER_RISCV_HPP

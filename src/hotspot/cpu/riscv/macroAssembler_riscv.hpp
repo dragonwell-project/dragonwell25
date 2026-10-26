@@ -31,6 +31,7 @@
 #include "code/vmreg.hpp"
 #include "metaprogramming/enableIf.hpp"
 #include "oops/compressedOops.hpp"
+#include "runtime/atomic.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/powerOfTwo.hpp"
 
@@ -1272,12 +1273,12 @@ INSN(sd_release, sd, sd_rl);
   void cmpxchg(Register addr, Register expected,
                Register new_val,
                Assembler::operand_size size,
-               Assembler::Aqrl acquire, Assembler::Aqrl release,
+               enum atomic_memory_order order,
                Register result, bool result_as_bool = false);
   void weak_cmpxchg(Register addr, Register expected,
                     Register new_val,
                     Assembler::operand_size size,
-                    Assembler::Aqrl acquire, Assembler::Aqrl release,
+                    enum atomic_memory_order order,
                     Register result);
   void cmpxchg_narrow_value_helper(Register addr, Register expected, Register new_val,
                                    Assembler::operand_size size,
@@ -1285,13 +1286,13 @@ INSN(sd_release, sd, sd_rl);
   void cmpxchg_narrow_value(Register addr, Register expected,
                             Register new_val,
                             Assembler::operand_size size,
-                            Assembler::Aqrl acquire, Assembler::Aqrl release,
+                            enum atomic_memory_order order,
                             Register result, bool result_as_bool,
                             Register tmp1, Register tmp2, Register tmp3);
   void weak_cmpxchg_narrow_value(Register addr, Register expected,
                                  Register new_val,
                                  Assembler::operand_size size,
-                                 Assembler::Aqrl acquire, Assembler::Aqrl release,
+                                 enum atomic_memory_order order,
                                  Register result,
                                  Register tmp1, Register tmp2, Register tmp3);
 
