@@ -563,6 +563,34 @@ final class ServerHello {
                     clientHello);
             shc.serverHelloRandom = shm.serverRandom;
 
+            // For key derivation, we will either use the traditional Key
+            // Agreement (KA) model or the Key Encapsulation Mechanism (KEM)
+            // model, depending on what key exchange group is used.
+            //
+            // For KA flows, the server first receives the client's share,
+            // then generates its key share, and finally comes here.
+            // However, this is changed for KEM: the server
+            // must perform both actions — derive the secret and generate
+            // the key encapsulation message at the same time during
+            // encapsulation in SHKeyShareProducer.
+            //
+            // Traditional Key Agreement (KA):
+            //   - Both peers generate a key share and exchange it.
+            //   - Each peer computes a shared secret sometime after
+            //     receiving the other's key share.
+            //
+            // Key Encapsulation Mechanism (KEM):
+            //  The client publishes a public key via a KeyShareExtension,
+            //  which the server uses to:
+            //
+            //  - generate the shared secret
+            //  - encapsulate the message which is sent to the client in
+            //    another KeyShareExtension
+            //
+            //  The derived shared secret must be stored in a
+            //  KEMSenderPossession so it can be retrieved for handshake
+            //  traffic secret derivation later.
+
             // Produce extensions for ServerHello handshake message.
             SSLExtension[] serverHelloExtensions =
                     shc.sslConfig.getEnabledExtensions(
@@ -588,9 +616,26 @@ final class ServerHello {
                         "Not negotiated key shares");
             }
 
-            SSLKeyDerivation handshakeKD = ke.createKeyDerivation(shc);
-            SecretKey handshakeSecret = handshakeKD.deriveKey(
-                    "TlsHandshakeSecret");
+            SecretKey handshakeSecret = null;
+
+            // For KEM, the shared secret has already been generated and
+            // stored in the server’s possession (KEMSenderPossession)
+            // during encapsulation in SHKeyShareProducer.
+            //
+            // Only one key share is selected by the server, so at most one
+            // possession will contain the pre-derived shared secret.
+            for (var pos : shc.handshakePossessions) {
+                if (pos instanceof KEMKeyExchange.KEMSenderPossession xp) {
+                    handshakeSecret = xp.getKey();
+                    break;
+                }
+            }
+
+            if (handshakeSecret == null) {
+                SSLKeyDerivation handshakeKD = ke.createKeyDerivation(shc);
+                handshakeSecret = handshakeKD.deriveKey(
+                        "TlsHandshakeSecret");
+            }
 
             SSLTrafficKeyDerivation kdg =
                 SSLTrafficKeyDerivation.valueOf(shc.negotiatedProtocol);
@@ -743,6 +788,15 @@ final class ServerHello {
         public byte[] produce(ConnectionContext context,
                 HandshakeMessage message) throws IOException {
             ServerHandshakeContext shc = (ServerHandshakeContext) context;
+
+
+            if (shc.sentHRR) {
+                throw shc.conContext.fatal(
+                        Alert.HANDSHAKE_FAILURE,
+                        "TLS 1.3 server MUST NOT send a second HelloRetryRequest " +
+                        "in the same connection");
+            }
+
             ClientHelloMessage clientHello = (ClientHelloMessage) message;
 
             // negotiate the cipher suite.
@@ -778,6 +832,7 @@ final class ServerHello {
             // Output the handshake message.
             hhrm.write(shc.handshakeOutput);
             shc.handshakeOutput.flush();
+            shc.sentHRR = true;
 
             // In TLS1.3 middlebox compatibility mode the server sends a
             // dummy change_cipher_spec record immediately after its
