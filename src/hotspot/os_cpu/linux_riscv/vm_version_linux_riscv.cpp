@@ -105,10 +105,10 @@
 #endif
 
 // XuanTie Linux prctl commands and memory models for the Ssdtso extension.
-static constexpr int xuantie_pr_set_memory_consistency_model = 0x4d434d53;
-static constexpr int xuantie_pr_get_memory_consistency_model = 0x4d434d47;
-static constexpr int riscv_memory_consistency_model_wmo = 1;
-static constexpr int riscv_memory_consistency_model_tso = 2;
+static constexpr int XUANTIE_PR_SET_MEMORY_CONSISTENCY_MODEL = 0x4d434d53;
+static constexpr int XUANTIE_PR_GET_MEMORY_CONSISTENCY_MODEL = 0x4d434d47;
+static constexpr int RISCV_MEMORY_CONSISTENCY_MODEL_WMO = 1;
+static constexpr int RISCV_MEMORY_CONSISTENCY_MODEL_TSO = 2;
 
 static void enable_dynamic_tso() {
   if (VM_Version::ext_Ztso.enabled()) {
@@ -130,9 +130,9 @@ static void enable_dynamic_tso() {
 
   // GET checks the kernel ABI and current model; SET and the following GET
   // establish that TSO is active before enabling TSO code generation.
-  int model = prctl(xuantie_pr_get_memory_consistency_model, 0L, 0L, 0L, 0L);
-  if (model != riscv_memory_consistency_model_wmo &&
-      model != riscv_memory_consistency_model_tso) {
+  int model = prctl(XUANTIE_PR_GET_MEMORY_CONSISTENCY_MODEL, 0L, 0L, 0L, 0L);
+  if (model != RISCV_MEMORY_CONSISTENCY_MODEL_WMO &&
+      model != RISCV_MEMORY_CONSISTENCY_MODEL_TSO) {
     if (!FLAG_IS_DEFAULT(UseSsdtso)) {
       warning("UseSsdtso disabled: Xuantie Ssdtso prctl ABI is unavailable (GET returned %d)", model);
     }
@@ -158,9 +158,9 @@ static void enable_dynamic_tso() {
     return;
   }
 
-  if (model != riscv_memory_consistency_model_tso &&
-      prctl(xuantie_pr_set_memory_consistency_model,
-            riscv_memory_consistency_model_tso, 0L, 0L, 0L) != 0) {
+  if (model == RISCV_MEMORY_CONSISTENCY_MODEL_WMO &&
+      prctl(XUANTIE_PR_SET_MEMORY_CONSISTENCY_MODEL,
+            RISCV_MEMORY_CONSISTENCY_MODEL_TSO, 0L, 0L, 0L) != 0) {
     int error = errno;
     FLAG_SET_ERGO(UseSsdtso, false);
     FLAG_SET_ERGO(UseZtso, false);
@@ -168,8 +168,8 @@ static void enable_dynamic_tso() {
     return;
   }
 
-  model = prctl(xuantie_pr_get_memory_consistency_model, 0L, 0L, 0L, 0L);
-  if (model != riscv_memory_consistency_model_tso) {
+  model = prctl(XUANTIE_PR_GET_MEMORY_CONSISTENCY_MODEL, 0L, 0L, 0L, 0L);
+  if (model != RISCV_MEMORY_CONSISTENCY_MODEL_TSO) {
     FLAG_SET_ERGO(UseSsdtso, false);
     FLAG_SET_ERGO(UseZtso, false);
     warning("UseZtso disabled: Ssdtso TSO mode verification failed (model=%d)", model);
