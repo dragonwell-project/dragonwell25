@@ -292,6 +292,8 @@ class VM_Version : public Abstract_VM_Version {
   decl(Zifencei    ,  RV_NO_FLAG_BIT,  true ,  NO_UPDATE_DEFAULT)                                         \
   /* Zihintpause Pause instruction HINT */                                                                \
   decl(Zihintpause ,  RV_NO_FLAG_BIT,  true ,  UPDATE_DEFAULT(UseZihintpause))                            \
+  /* Supervisor-mode Dynamic TSO */                                                                       \
+  decl(Ssdtso      ,  RV_NO_FLAG_BIT,  true ,  UPDATE_DEFAULT(UseSsdtso))                                 \
   /* Total Store Ordering */                                                                              \
   decl(Ztso        ,  RV_NO_FLAG_BIT,  true ,  UPDATE_DEFAULT(UseZtso))                                   \
   /* Vector Basic Bit-manipulation */                                                                     \

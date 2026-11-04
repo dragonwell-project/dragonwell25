@@ -33,9 +33,11 @@
 #include "runtime/os.inline.hpp"
 #include "runtime/vm_version.hpp"
 #include "utilities/formatBuffer.hpp"
+#include "vm_version_riscv.hpp"
 
 #include <asm/hwcap.h>
 #include <ctype.h>
+#include <errno.h>
 #include <sys/auxv.h>
 #include <sys/prctl.h>
 
@@ -101,6 +103,84 @@
 #ifndef PR_RISCV_SCOPE_PER_THREAD
 #define PR_RISCV_SCOPE_PER_THREAD  1
 #endif
+
+// XuanTie Linux prctl commands and memory models for the Ssdtso extension.
+static constexpr int XUANTIE_PR_SET_MEMORY_CONSISTENCY_MODEL = 0x4d434d53;
+static constexpr int XUANTIE_PR_GET_MEMORY_CONSISTENCY_MODEL = 0x4d434d47;
+static constexpr int RISCV_MEMORY_CONSISTENCY_MODEL_WMO = 1;
+static constexpr int RISCV_MEMORY_CONSISTENCY_MODEL_TSO = 2;
+
+static void enable_dynamic_tso() {
+  if (VM_Version::ext_Ztso.enabled()) {
+    if (!FLAG_IS_DEFAULT(UseSsdtso) && UseSsdtso) {
+      FLAG_SET_ERGO(UseSsdtso, false);
+      warning("UseSsdtso disabled: this CPU already implements Ztso.");
+    }
+    return;
+  }
+
+  // Honor an explicit opt-out without changing the process memory model.
+  // Explicit +UseZtso retains its existing meaning as a user assertion.
+  if (!FLAG_IS_DEFAULT(UseSsdtso) && !UseSsdtso) {
+    if (UseZtso) {
+      warning("UseZtso is enabled but -XX:-UseSsdtso leaves the process memory model unchanged.");
+    }
+    return;
+  }
+
+  // GET checks the kernel ABI and current model; SET and the following GET
+  // establish that TSO is active before enabling TSO code generation.
+  int model = prctl(XUANTIE_PR_GET_MEMORY_CONSISTENCY_MODEL, 0L, 0L, 0L, 0L);
+  if (model != RISCV_MEMORY_CONSISTENCY_MODEL_WMO &&
+      model != RISCV_MEMORY_CONSISTENCY_MODEL_TSO) {
+    if (!FLAG_IS_DEFAULT(UseSsdtso)) {
+      warning("UseSsdtso disabled: Xuantie Ssdtso prctl ABI is unavailable (GET returned %d)", model);
+    }
+    FLAG_SET_ERGO(UseSsdtso, false);
+    if (UseZtso) {
+      // Kernel doesn't support Ssdtso prctl ABI, the CPU runs in the default RVWMO mode.
+      // But the user manually specifies Ztso, resulting in warnings being output.
+      FLAG_SET_ERGO(UseZtso, false);
+      warning("UseZtso disabled: Xuantie Ssdtso prctl ABI is unavailable (GET returned %d)", model);
+    } else {
+      log_info(os, cpu)("Xuantie Ssdtso prctl ABI is unavailable (GET returned %d).", model);
+    }
+    return;
+  }
+
+  if (!UseZtso && !FLAG_IS_DEFAULT(UseZtso)) {
+    if (!FLAG_IS_DEFAULT(UseSsdtso)) {
+      warning("UseSsdtso disabled: TSO mode is disabled by -XX:-UseZtso.");
+    } else {
+      log_info(os, cpu)("Ssdtso TSO mode disabled by -XX:-UseZtso.");
+    }
+    FLAG_SET_ERGO(UseSsdtso, false);
+    return;
+  }
+
+  if (model == RISCV_MEMORY_CONSISTENCY_MODEL_WMO &&
+      prctl(XUANTIE_PR_SET_MEMORY_CONSISTENCY_MODEL,
+            RISCV_MEMORY_CONSISTENCY_MODEL_TSO, 0L, 0L, 0L) != 0) {
+    int error = errno;
+    FLAG_SET_ERGO(UseSsdtso, false);
+    FLAG_SET_ERGO(UseZtso, false);
+    warning("UseZtso disabled: failed to enable Ssdtso TSO mode (prctl errno=%d)", error);
+    return;
+  }
+
+  model = prctl(XUANTIE_PR_GET_MEMORY_CONSISTENCY_MODEL, 0L, 0L, 0L, 0L);
+  if (model != RISCV_MEMORY_CONSISTENCY_MODEL_TSO) {
+    FLAG_SET_ERGO(UseSsdtso, false);
+    FLAG_SET_ERGO(UseZtso, false);
+    warning("UseZtso disabled: Ssdtso TSO mode verification failed (model=%d)", model);
+    return;
+  }
+
+  VM_Version::ext_Ssdtso.enable_feature();
+  FLAG_SET_ERGO(UseSsdtso, true);
+  FLAG_SET_ERGO(UseZtso, true);
+  log_info(os, cpu)("UseZtso enabled after switching the JVM to Ssdtso TSO mode.");
+}
 
 uint32_t VM_Version::cpu_vector_length() {
   return (uint32_t)read_csr(CSR_VLENB);
@@ -395,4 +475,6 @@ void VM_Version::xuantie_features() {
   if (FLAG_IS_DEFAULT(CodeEntryAlignment)) {
     FLAG_SET_DEFAULT(CodeEntryAlignment, 32);
   }
+
+  enable_dynamic_tso();
 }
