@@ -4531,7 +4531,7 @@ instruct vstringL_indexof_char(iRegP_R11 str1, iRegI_R12 cnt1, iRegI_R13 ch,
 instruct vclearArray_reg_reg(iRegL_R29 cnt, iRegP_R28 base, Universe dummy,
                              vReg_V4 v4, vReg_V5 v5, vReg_V6 v6, vReg_V7 v7)
 %{
-  predicate(!UseBlockZeroing && UseRVV);
+  predicate(UseRVV);
   match(Set dummy (ClearArray cnt base));
   effect(USE_KILL cnt, USE_KILL base, TEMP v4, TEMP v5, TEMP v6, TEMP v7);
 

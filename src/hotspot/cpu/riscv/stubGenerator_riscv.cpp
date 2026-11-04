@@ -675,24 +675,12 @@ class StubGenerator: public StubCodeGenerator {
   address generate_zero_blocks() {
     Label done;
 
-    const Register base = x28, cnt = x29, tmp1 = x30, tmp2 = x31;
+    const Register base = x28, cnt = x29, tmp1 = x30;
 
     __ align(CodeEntryAlignment);
     StubGenStubId stub_id = StubGenStubId::zero_blocks_id;
     StubCodeMark mark(this, stub_id);
     address start = __ pc();
-
-    if (UseBlockZeroing) {
-      int zicboz_block_size = VM_Version::zicboz_block_size.value();
-      // Ensure count >= 2 * zicboz_block_size so that it still deserves
-      // a cbo.zero after alignment.
-      Label small;
-      int low_limit = MAX2(2 * zicboz_block_size, (int)BlockZeroingLowLimit) / wordSize;
-      __ mv(tmp1, low_limit);
-      __ blt(cnt, tmp1, small);
-      __ zero_dcache_blocks(base, cnt, tmp1, tmp2);
-      __ bind(small);
-    }
 
     {
       // Clear the remaining blocks.
