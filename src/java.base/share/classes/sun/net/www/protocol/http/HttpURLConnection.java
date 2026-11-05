@@ -61,6 +61,7 @@ import java.util.Set;
 import java.util.StringJoiner;
 import jdk.internal.access.JavaNetHttpCookieAccess;
 import jdk.internal.access.SharedSecrets;
+import jdk.internal.util.Exceptions;
 import sun.net.NetProperties;
 import sun.net.NetworkClient;
 import sun.net.util.IPAddressUtil;
@@ -364,6 +365,9 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
     private boolean tryTransparentNTLMServer = true;
     private boolean tryTransparentNTLMProxy = true;
     private boolean useProxyResponseCode = false;
+
+    // used when redirecting to compare current and previous proxies
+    private Proxy lastProxy;
 
     /* Used by Windows specific code */
     private Object authObj;
@@ -1370,7 +1374,6 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
         // If the user has set either of these headers then do not remove them
         isUserServerAuth = requests.getKey("Authorization") != -1;
         isUserProxyAuth = requests.getKey("Proxy-Authorization") != -1;
-
         try {
             do {
                 if (!checkReuseConnection())
@@ -1380,6 +1383,14 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                     return cachedInputStream;
                 }
 
+                // we may need to remove proxy-authorization
+                Proxy p = http.getHttpProxy();
+                // if we're not using a proxy or if the proxy to be used is not
+                // the same as the originally set one, then remove it
+                if (p == null || (lastProxy != null && !lastProxy.equals(p))) {
+                    requests.remove("Proxy-Authorization");
+                    lastProxy = null;
+                }
                 /* REMIND: This exists to fix the HttpsURLConnection subclass.
                  * Hotjava needs to run on JDK1.1FCS.  Do proper fix once a
                  * proper solution for SSL can be found.
@@ -1410,7 +1421,7 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                     disconnectInternal();
                     throw new IOException ("Invalid Http response");
                 }
-                if (respCode == HTTP_PROXY_AUTH) {
+                if (respCode == HTTP_PROXY_AUTH && tunnelState() != TunnelState.TUNNELING) {
                     if (streaming()) {
                         disconnectInternal();
                         throw new HttpRetryException (
@@ -1464,16 +1475,29 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                         /* in this case, only one header field will be present */
                         String raw = responses.findValue ("Proxy-Authenticate");
                         reset ();
-                        if (!proxyAuthentication.setHeaders(this,
-                                                        authhdr.headerParser(), raw)) {
+                        try {
+                            proxyAuthentication.setHeaders(this,
+                                    authhdr.headerParser(), raw);
+                        } catch (IOException ex) {
                             disconnectInternal();
-                            throw new IOException ("Authentication failure");
+                            if (Exceptions.enhancedNonSocketExceptions()) {
+                                throw new IOException ("Authentication failure", ex);
+                            } else {
+                                throw new IOException ("Authentication failure");
+                            }
                         }
-                        if (serverAuthentication != null && srvHdr != null &&
-                                !serverAuthentication.setHeaders(this,
-                                                        srvHdr.headerParser(), raw)) {
-                            disconnectInternal ();
-                            throw new IOException ("Authentication failure");
+                        if (serverAuthentication != null && srvHdr != null) {
+                            try {
+                                serverAuthentication.setHeaders(this,
+                                        srvHdr.headerParser(), raw);
+                            } catch (IOException ex) {
+                                disconnectInternal();
+                                if (Exceptions.enhancedNonSocketExceptions()) {
+                                    throw new IOException ("Authentication failure", ex);
+                                } else {
+                                    throw new IOException ("Authentication failure");
+                                }
+                            }
                         }
                         authObj = null;
                         doingNTLMp2ndStage = false;
@@ -1552,9 +1576,15 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                     } else {
                         reset ();
                         /* header not used for ntlm */
-                        if (!serverAuthentication.setHeaders(this, null, raw)) {
+                        try {
+                            serverAuthentication.setHeaders(this, null, raw);
+                        } catch (IOException ex) {
                             disconnectWeb();
-                            throw new IOException ("Authentication failure");
+                            if (Exceptions.enhancedNonSocketExceptions()) {
+                                throw new IOException ("Authentication failure", ex);
+                            } else {
+                                throw new IOException ("Authentication failure");
+                            }
                         }
                         doingNTLM2ndStage = false;
                         authObj = null;
@@ -1944,10 +1974,16 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                     } else {
                         String raw = responses.findValue ("Proxy-Authenticate");
                         reset ();
-                        if (!proxyAuthentication.setHeaders(this,
-                                                authhdr.headerParser(), raw)) {
+                        try {
+                            proxyAuthentication.setHeaders(this,
+                                    authhdr.headerParser(), raw);
+                        } catch (IOException ex) {
                             disconnectInternal();
-                            throw new IOException ("Authentication failure");
+                            if (Exceptions.enhancedNonSocketExceptions()) {
+                                throw new IOException ("Authentication failure", ex);
+                            } else {
+                                throw new IOException ("Authentication failure");
+                            }
                         }
                         authObj = null;
                         doingNTLMp2ndStage = false;
@@ -1962,6 +1998,7 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
 
                 if (respCode == HTTP_OK) {
                     setTunnelState(TunnelState.TUNNELING);
+                    savedRequests.remove("Proxy-Authorization");
                     break;
                 }
                 // we don't know how to deal with other response code
@@ -2210,7 +2247,9 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                 };
             }
             if (ret != null) {
-                if (!ret.setHeaders(this, p, raw)) {
+                try {
+                    ret.setHeaders(this, p, raw);
+                } catch (IOException e) {
                     ret.disposeContext();
                     ret = null;
                 }
@@ -2367,7 +2406,9 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
                 }
             }
             if (ret != null ) {
-                if (!ret.setHeaders(this, p, raw)) {
+                try {
+                    ret.setHeaders(this, p, raw);
+                } catch (IOException e) {
                     ret.disposeContext();
                     ret = null;
                 }
@@ -2480,6 +2521,7 @@ public class HttpURLConnection extends java.net.HttpURLConnection {
     {
         assert isLockHeldByCurrentThread();
 
+        lastProxy = http.getHttpProxy();
         disconnectInternal();
         if (streaming()) {
             throw new HttpRetryException (RETRY_MSG3, stat, loc);
