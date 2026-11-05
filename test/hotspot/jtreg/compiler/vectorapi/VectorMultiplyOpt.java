@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -107,7 +107,8 @@ public class VectorMultiplyOpt {
     }
 
     @Test
-    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.AND_VL, " >0 "}, applyIfCPUFeature = {"avx", "true"})
+    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.AND_VL, " >0 "},
+        applyIfCPUFeatureOr = {"avx", "true", "rvv", "true"})
     @IR(counts = {"vmuludq", " >0 "}, phase = CompilePhase.FINAL_CODE, applyIfCPUFeature = {"avx", "true"})
     @Warmup(value = 10000)
     public static void test_pattern1() {
@@ -130,7 +131,8 @@ public class VectorMultiplyOpt {
     }
 
     @Test
-    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.AND_VL, " >0 ", IRNode.URSHIFT_VL, " >0 "}, applyIfCPUFeature = {"avx", "true"})
+    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.AND_VL, " >0 ", IRNode.URSHIFT_VL, " >0 "},
+        applyIfCPUFeatureOr = {"avx", "true", "rvv", "true"})
     @IR(counts = {"vmuludq", " >0 "}, phase = CompilePhase.FINAL_CODE, applyIfCPUFeature = {"avx", "true"})
     @Warmup(value = 10000)
     public static void test_pattern2() {
@@ -153,7 +155,8 @@ public class VectorMultiplyOpt {
     }
 
     @Test
-    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.URSHIFT_VL, " >0 "}, applyIfCPUFeature = {"avx", "true"})
+    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.URSHIFT_VL, " >0 "},
+        applyIfCPUFeatureOr = {"avx", "true", "rvv", "true"})
     @IR(counts = {"vmuludq", " >0 "}, phase = CompilePhase.FINAL_CODE, applyIfCPUFeature = {"avx", "true"})
     @Warmup(value = 10000)
     public static void test_pattern3() {
@@ -176,7 +179,8 @@ public class VectorMultiplyOpt {
     }
 
     @Test
-    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.URSHIFT_VL, " >0 "}, applyIfCPUFeature = {"avx", "true"})
+    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.URSHIFT_VL, " >0 "},
+        applyIfCPUFeatureOr = {"avx", "true", "rvv", "true"})
     @IR(counts = {"vmuludq", " >0 "}, applyIfCPUFeature = {"avx", "true"}, phase = CompilePhase.FINAL_CODE)
     @Warmup(value = 10000)
     public static void test_pattern4() {
@@ -199,7 +203,8 @@ public class VectorMultiplyOpt {
     }
 
     @Test
-    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.VECTOR_CAST_I2L, " >0 "}, applyIfCPUFeature = {"avx", "true"})
+    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.VECTOR_CAST_I2L, " >0 "},
+        applyIfCPUFeatureOr = {"avx", "true", "rvv", "true"})
     @IR(counts = {"vmuldq", " >0 "}, applyIfCPUFeature = {"avx", "true"}, phase = CompilePhase.FINAL_CODE)
     @Warmup(value = 10000)
     public static void test_pattern5() {
@@ -225,7 +230,8 @@ public class VectorMultiplyOpt {
 
 
     @Test
-    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.RSHIFT_VL, " >0 "}, applyIfCPUFeature = {"avx", "true"})
+    @IR(counts = {IRNode.MUL_VL, " >0 ", IRNode.RSHIFT_VL, " >0 "},
+        applyIfCPUFeatureOr = {"avx", "true", "rvv", "true"})
     @IR(counts = {"vmuldq", " >0 "}, applyIfCPUFeature = {"avx", "true"}, phase = CompilePhase.FINAL_CODE)
     @Warmup(value = 10000)
     public static void test_pattern6() {
