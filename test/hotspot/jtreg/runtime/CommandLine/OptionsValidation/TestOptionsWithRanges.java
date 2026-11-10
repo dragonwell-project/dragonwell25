@@ -260,6 +260,7 @@ public class TestOptionsWithRanges {
         excludeTestMaxRange("ProfiledCodeHeapSize");
         excludeTestMaxRange("NonNMethodCodeHeapSize");
         excludeTestMaxRange("CodeCacheExpansionSize");
+        excludeTestMaxRange("NonProfiledHotCodeHeapSize");
 
         /*
          * Exclude CompileThresholdScaling from max range testing, because
